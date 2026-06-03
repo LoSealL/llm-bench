@@ -76,8 +76,8 @@ class LongBenchRunner:
     def _extract_answer(response: str) -> str | None:
         """Extract the multiple-choice letter from model output.
 
-        Supports patterns such as ``"The correct answer is (A)"`` or
-        ``"The correct answer is A"``.
+        Tries explicit format patterns first, then falls back to the
+        last occurrence of a standalone ``A``-``D`` letter.
 
         Args:
             response: Raw model response.
@@ -85,15 +85,19 @@ class LongBenchRunner:
         Returns:
             Uppercase letter ``A``-``D``, or ``None``.
         """
-        response = response.replace("*", "")
+        cleaned = response.replace("*", "")
+        # Explicit format required by the prompt template
         for pattern in (
             r"The correct answer is \(([A-D])\)",
             r"The correct answer is ([A-D])",
+            r"(?:答案是|Answer:|answer:)\s*\(?([A-D])\)?",
         ):
-            match = re.search(pattern, response)
+            match = re.search(pattern, cleaned)
             if match:
                 return match.group(1)
-        return None
+        # Fallback: last standalone uppercase letter A-D
+        letters = re.findall(r"\b([A-D])\b", cleaned)
+        return letters[-1] if letters else None
 
     def _predict(self) -> list[dict[str, Any]]:
         """Run inference on the full LongBench-v2 dataset.

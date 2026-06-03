@@ -1,0 +1,36 @@
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment
+.env
+.venv/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Agent tools
+.codegraph/
+.claude/
+.opencode/
+
+# Package manager
+uv.lock
+
+# Benchmark outputs
+results/

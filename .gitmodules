@@ -1,0 +1,6 @@
+[submodule "scripts/LVEval"]
+	path = scripts/LVEval
+	url = https://github.com/infinigence/LVEval
+[submodule "scripts/LongBench"]
+	path = scripts/LongBench
+	url = https://github.com/THUDM/LongBench

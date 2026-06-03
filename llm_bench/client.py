@@ -70,8 +70,13 @@ class LLMClient:
                     temperature=temperature,
                     max_tokens=max_tokens,
                 )
-                content = response.choices[0].message.content
-                return content if content is not None else ""
+                msg = response.choices[0].message
+                content = msg.content
+                if content:
+                    return content
+                # Some models (e.g. Qwen) put reasoning in reasoning_content
+                reasoning = getattr(msg, "reasoning_content", None)
+                return reasoning if reasoning else ""
             except KeyboardInterrupt:
                 raise
             except Exception as exc:  # noqa: BLE001

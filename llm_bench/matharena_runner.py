@@ -37,6 +37,7 @@ class MathArenaRunner:
         self,
         client: LLMClient,
         output_dir: str | Path,
+        limit: int | None = None,
     ) -> None:
         """Prepare the runner.
 
@@ -44,8 +45,10 @@ class MathArenaRunner:
             client: Initialized LLM client.
             output_dir: Base output directory; results are written to
                 ``output_dir/matharena/``.
+            limit: If set, evaluate only the first *N* samples.
         """
         self._client = client
+        self._limit = limit
         self._output_dir = Path(output_dir) / "matharena"
         ensure_dir(self._output_dir)
 
@@ -81,6 +84,8 @@ class MathArenaRunner:
             ``answer``, and ``correct`` fields.
         """
         dataset = load_dataset("MathArena/aime_2026", split="train")
+        if self._limit is not None:
+            dataset = dataset.select(range(min(self._limit, len(dataset))))
         results: list[dict[str, Any]] = []
 
         for item in tqdm(dataset, desc="MathArena"):

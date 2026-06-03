@@ -23,6 +23,16 @@ from llm_bench.client import LLMClient
 from llm_bench.reporter import ensure_dir
 
 
+class _MockModule:
+    """Minimal stand-in for ``torch`` so third-party imports succeed."""
+
+    def __getattr__(self, name: str) -> Any:  # noqa: ANN401
+        return _MockModule()
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
+        return _MockModule()
+
+
 class LVEvalRunner:
     """Execute the LVEval benchmark suite.
 
@@ -41,6 +51,7 @@ class LVEvalRunner:
         client: LLMClient,
         output_dir: str | Path,
         max_length: int = 32000,
+        limit: int | None = None,
     ) -> None:
         """Prepare the runner.
 
@@ -49,9 +60,12 @@ class LVEvalRunner:
             output_dir: Base output directory; predictions are written
                 to ``output_dir/lveval/``.
             max_length: Token budget for prompt truncation.
+            limit: If set, evaluate only the first *N* samples per
+                dataset (useful for quick smoke tests).
         """
         self._client = client
         self._max_length = max_length
+        self._limit = limit
         self._output_dir = Path(output_dir) / "lveval"
         ensure_dir(self._output_dir)
 
@@ -62,9 +76,18 @@ class LVEvalRunner:
     def _load_third_party_modules(self) -> tuple[Any, Any, Any]:
         """Load ``config``, ``utils``, and ``metrics`` from ``scripts/LVEval``.
 
+        ``utils`` imports ``torch`` for local-model loading paths we do
+        not use; we inject a lightweight mock so the import succeeds.
+
         Returns:
             A 3-tuple of loaded module objects.
         """
+        # Mock heavy ML deps so scripts/LVEval/utils.py can import
+        mocked: list[str] = []
+        for mod in ("torch", "transformers"):
+            if mod not in sys.modules:
+                sys.modules[mod] = _MockModule()
+                mocked.append(mod)
         sys.path.insert(0, str(self._scripts_dir))
         try:
             config = importlib.import_module("config")
@@ -72,6 +95,8 @@ class LVEvalRunner:
             metrics = importlib.import_module("metrics")
         finally:
             sys.path.pop(0)
+            for mod in mocked:
+                sys.modules.pop(mod, None)
         return config, utils, metrics
 
     def _get_datasets(
@@ -111,10 +136,13 @@ class LVEvalRunner:
             List of prediction dictionaries compatible with the original
             evaluation script.
         """
+        dataset_base = re.split(r"_.{1,3}k", dataset_name)[0]
         datas = self._utils.load_LVEval_dataset(
             dataset_name,
-            data_path=None,
+            data_path=f"data/lveval/{dataset_base}",
         )
+        if self._limit is not None:
+            datas = datas[:self._limit]
         dataset_base = re.split(r"_.{1,3}k", dataset_name)[0]
         prompt_format = self._config.DATASET_PROMPT[dataset_base]
         max_gen = self._config.DATASET_MAXGEN[dataset_base]

@@ -74,6 +74,12 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Skip the MathArena benchmark.",
     )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Limit each dataset to the first N samples (for testing).",
+    )
     return parser.parse_args()
 
 
@@ -99,6 +105,7 @@ def main() -> None:
             client,
             args.output_dir,
             max_length=args.max_length,
+            limit=args.limit,
         )
         results.lveval = lveval.run(
             selected=args.lveval_datasets,
@@ -109,14 +116,18 @@ def main() -> None:
         print("=" * 60)
         print("Running LongBench-v2")
         print("=" * 60)
-        longbench = LongBenchRunner(client, args.output_dir)
+        longbench = LongBenchRunner(
+            client, args.output_dir, limit=args.limit,
+        )
         results.longbench = longbench.run()
 
     if not args.skip_matharena:
         print("=" * 60)
         print("Running MathArena")
         print("=" * 60)
-        matharena = MathArenaRunner(client, args.output_dir)
+        matharena = MathArenaRunner(
+            client, args.output_dir, limit=args.limit,
+        )
         results.matharena = matharena.run()
 
     print("=" * 60)

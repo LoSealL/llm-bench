@@ -6,9 +6,11 @@ readme = "README.md"
 requires-python = ">=3.12.13"
 dependencies = [
     "datasets>=4.8.5",
+    "jieba>=0.42.1",
     "openai>=2.40.0",
     "pandas>=3.0.3",
     "python-dotenv>=1.2.2",
+    "rouge>=1.0.1",
     "tiktoken>=0.13.0",
 ]
 

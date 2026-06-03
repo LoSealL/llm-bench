@@ -35,6 +35,7 @@ class LongBenchRunner:
         self,
         client: LLMClient,
         output_dir: str | Path,
+        limit: int | None = None,
     ) -> None:
         """Prepare the runner.
 
@@ -42,8 +43,10 @@ class LongBenchRunner:
             client: Initialized LLM client.
             output_dir: Base output directory; predictions are written
                 to ``output_dir/longbench/``.
+            limit: If set, evaluate only the first *N* samples.
         """
         self._client = client
+        self._limit = limit
         self._output_dir = Path(output_dir) / "longbench"
         ensure_dir(self._output_dir)
 
@@ -117,6 +120,8 @@ class LongBenchRunner:
             }
             for item in dataset
         ]
+        if self._limit is not None:
+            data_all = data_all[:self._limit]
 
         results: list[dict[str, Any]] = []
         for item in tqdm(data_all, desc="LongBench-v2"):

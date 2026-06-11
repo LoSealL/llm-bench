@@ -6,17 +6,14 @@ Provides a thin wrapper around the official ``openai`` SDK that adds
 automatic retry logic and token-based prompt truncation.
 """
 
-from __future__ import annotations
-
 import time
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import tiktoken
 from loguru import logger
 from openai import OpenAI
 
-if TYPE_CHECKING:
-    from llm_bench.config import BenchConfig
+from llm_bench.config import BenchConfig
 
 
 class LLMClient:
@@ -117,15 +114,12 @@ class LLMClient:
                 if content:
                     logger.debug("Received response ({} chars)", len(content))
                     return content
-                # Some models (e.g. Qwen) put reasoning in reasoning_content
                 reasoning = getattr(msg, "reasoning_content", None)
                 if reasoning:
                     logger.debug("Received reasoning_content instead of content")
                     return reasoning
                 logger.warning("Empty response from model")
                 return ""
-            except KeyboardInterrupt:
-                raise
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
                     "API call failed (attempt {}/{}): {}", attempt, max_retries, exc

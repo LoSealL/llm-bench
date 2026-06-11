@@ -5,8 +5,6 @@
 Ported from bfcl-lite for standalone evaluation.
 """
 
-from __future__ import annotations
-
 import json
 import re
 from pathlib import Path
@@ -31,6 +29,16 @@ from llm_bench.bfcl_constants import (
 def extract_test_category(
     input_string: str | Path, raise_error: bool = True
 ) -> str | None:
+    """Extract the BFCL test category from a file path or string.
+
+    Args:
+        input_string: Path or string containing a BFCL filename.
+        raise_error: Whether to raise if extraction fails.
+
+    Returns:
+        Test category name, or ``None`` if extraction fails and
+        ``raise_error`` is ``False``.
+    """
     input_string = str(input_string)
     pattern = rf".*{VERSION_PREFIX}_(\w+?)(?:_score|_result)?\.json"
     match = re.search(pattern, input_string)
@@ -42,17 +50,43 @@ def extract_test_category(
 
 
 def extract_test_category_from_id(test_entry_id: str) -> str:
+    """Extract the test category from an entry identifier.
+
+    Args:
+        test_entry_id: Entry identifier, optionally with a suffix
+            separated by ``:``.
+
+    Returns:
+        Test category name.
+    """
     if ":" in test_entry_id:
         test_entry_id = test_entry_id.split(":")[0]
     return test_entry_id.rsplit("_", 1)[0]
 
 
 def get_file_name_by_category(test_category: str, is_result_file: bool = False) -> str:
+    """Build the BFCL filename for a category.
+
+    Args:
+        test_category: Category name.
+        is_result_file: Whether to use the result-file suffix.
+
+    Returns:
+        Filename string.
+    """
     suffix = "_result.json" if is_result_file else ".json"
     return f"{VERSION_PREFIX}_{test_category}{suffix}"
 
 
 def parse_test_category_argument(test_category_args: list[str]) -> list[str]:
+    """Expand category arguments into concrete category names.
+
+    Args:
+        test_category_args: Category names or collection aliases.
+
+    Returns:
+        Sorted list of concrete category names.
+    """
     test_name_total: set[str] = set()
     for tc in test_category_args:
         if tc in TEST_COLLECTION_MAPPING:
@@ -65,18 +99,30 @@ def parse_test_category_argument(test_category_args: list[str]) -> list[str]:
 
 
 def is_relevance_or_irrelevance(test_category: str) -> bool:
+    """Return whether the category is relevance or irrelevance."""
     return "relevance" in test_category or "irrelevance" in test_category
 
 
 def is_live(test_category: str) -> bool:
+    """Return whether the category is a live evaluation."""
     return "live" in test_category
 
 
 def is_non_live(test_category: str) -> bool:
+    """Return whether the category is not a live evaluation."""
     return not is_live(test_category)
 
 
 def load_file(file_path: str | Path, sort_by_id: bool = False) -> list[dict[str, Any]]:
+    """Load a JSON Lines file.
+
+    Args:
+        file_path: Path to the JSONL file.
+        sort_by_id: Whether to sort entries by identifier.
+
+    Returns:
+        List of parsed dictionaries.
+    """
     result: list[dict[str, Any]] = []
     with open(file_path, encoding="utf-8") as f:
         for line in f:
@@ -91,6 +137,13 @@ def load_file(file_path: str | Path, sort_by_id: bool = False) -> list[dict[str,
 def write_list_of_dicts_to_file(
     filename: str, data: list[dict[str, Any]], subdir: str | Path | None = None
 ) -> None:
+    """Write a list of dictionaries to a JSON Lines file.
+
+    Args:
+        filename: Output filename.
+        data: Dictionaries to serialise.
+        subdir: Optional subdirectory for the output file.
+    """
     if subdir:
         subdir_path = Path(subdir)
         subdir_path.mkdir(parents=True, exist_ok=True)
@@ -102,6 +155,14 @@ def write_list_of_dicts_to_file(
 
 
 def make_json_serializable(value: Any) -> Any:
+    """Recursively convert a value to a JSON-serialisable form.
+
+    Args:
+        value: Value of any type.
+
+    Returns:
+        JSON-serialisable value.
+    """
     if isinstance(value, dict):
         return {k: make_json_serializable(v) for k, v in value.items()}
     if isinstance(value, list):
@@ -114,6 +175,14 @@ def make_json_serializable(value: Any) -> Any:
 
 
 def sort_key(entry: dict[str, Any]) -> tuple[str, int]:
+    """Build a sort key for an entry based on its identifier.
+
+    Args:
+        entry: Dictionary with an ``id`` key.
+
+    Returns:
+        Tuple of ``(test_category, index)``.
+    """
     entry_id = entry["id"].split(":")[0]
     parts = entry_id.rsplit("_", 1)
     test_category, index = parts[0], parts[1]
@@ -123,6 +192,7 @@ def sort_key(entry: dict[str, Any]) -> tuple[str, int]:
 
 
 def is_function_calling_format_output(decoded_output: Any) -> bool:
+    """Return whether decoded output follows the function-calling format."""
     if not isinstance(decoded_output, list):
         return False
     for item in decoded_output:
@@ -136,6 +206,7 @@ def is_function_calling_format_output(decoded_output: Any) -> bool:
 
 
 def is_empty_output(decoded_output: Any) -> bool:
+    """Return whether the decoded output is effectively empty."""
     if not is_function_calling_format_output(decoded_output):
         return True
     if len(decoded_output) == 0:
@@ -146,6 +217,14 @@ def is_empty_output(decoded_output: Any) -> bool:
 
 
 def load_dataset_entry(test_category: str) -> list[dict[str, Any]]:
+    """Load prompt entries for a BFCL category.
+
+    Args:
+        test_category: Category name.
+
+    Returns:
+        List of prompt dictionaries.
+    """
     file_name = get_file_name_by_category(test_category)
     file_path = PROMPT_PATH / file_name
     logger.debug("Loading BFCL dataset entry for {} from {}", test_category, file_path)
@@ -159,6 +238,14 @@ def load_dataset_entry(test_category: str) -> list[dict[str, Any]]:
 
 
 def load_ground_truth_entry(test_category: str) -> list[dict[str, Any]]:
+    """Load ground-truth entries for a BFCL category.
+
+    Args:
+        test_category: Category name.
+
+    Returns:
+        List of ground-truth dictionaries.
+    """
     file_name = get_file_name_by_category(test_category)
     file_path = POSSIBLE_ANSWER_PATH / file_name
     logger.debug(
@@ -174,8 +261,17 @@ def load_ground_truth_entry(test_category: str) -> list[dict[str, Any]]:
 
 
 def _add_language_hint(
-    functions: list[dict[str, Any]], test_category: str
+    functions: list[dict[str, Any]], _test_category: str
 ) -> list[dict[str, Any]]:
+    """Append a Python syntax hint to function descriptions.
+
+    Args:
+        functions: Function schema list.
+        test_category: Category name.
+
+    Returns:
+        Modified function schema list.
+    """
     if len(functions) == 0:
         return functions
     hint = " Note that the provided function is in Python 3 syntax."
@@ -185,6 +281,14 @@ def _add_language_hint(
 
 
 def extract_prompt_format_from_id(test_entry_id: str) -> str:
+    """Extract the prompt-format suffix from an entry identifier.
+
+    Args:
+        test_entry_id: Entry identifier.
+
+    Returns:
+        Prompt-format string, or the default format if absent.
+    """
     if ":" not in test_entry_id:
         return DEFAULT_SYSTEM_PROMPT_FORMAT
     parts = test_entry_id.split(":")
@@ -197,6 +301,16 @@ def system_prompt_pre_processing_chat_model(
     function_docs: list[dict[str, Any]],
     test_entry_id: str,
 ) -> list[dict[str, str]]:
+    """Prepend a system prompt with formatted function documentation.
+
+    Args:
+        prompts: Existing message list.
+        function_docs: Function schemas.
+        test_entry_id: Entry identifier.
+
+    Returns:
+        Message list with the updated or inserted system prompt.
+    """
     prompt_format = extract_prompt_format_from_id(test_entry_id)
     system_prompt = _formulate_system_prompt(prompt_format, function_docs)
     if prompts[0]["role"] == "system":
@@ -209,6 +323,15 @@ def system_prompt_pre_processing_chat_model(
 def _formulate_system_prompt(
     format_sensitivity_config: str, functions: list[dict[str, Any]]
 ) -> str:
+    """Build the system prompt for a given format configuration.
+
+    Args:
+        format_sensitivity_config: Format configuration string.
+        functions: Function schemas.
+
+    Returns:
+        Rendered system prompt.
+    """
     (
         return_format,
         has_tool_call_tag,
@@ -250,7 +373,16 @@ def _formulate_system_prompt(
 
 
 def parse_prompt_variation_params(input_str: str) -> tuple[str, bool, str, str, str]:
-    _PATTERN = re.compile(
+    """Parse a format-sensitivity configuration string.
+
+    Args:
+        input_str: Configuration string.
+
+    Returns:
+        Tuple of ``(return_format, has_tool_call_tag,
+        function_doc_format, prompt_format, prompt_style)``.
+    """
+    _pattern = re.compile(
         r"^"
         r"ret_fmt=(?P<return_format>python|json|verbose_xml|concise_xml)"
         r"&tool_call_tag=(?P<has_tool_call_tag>True|False)"
@@ -259,7 +391,7 @@ def parse_prompt_variation_params(input_str: str) -> tuple[str, bool, str, str, 
         r"&style=(?P<prompt_style>classic|experimental)"
         r"$"
     )
-    match = _PATTERN.match(input_str)
+    match = _pattern.match(input_str)
     if not match:
         raise ValueError(f"Invalid query format: {input_str!r}")
     return (
@@ -274,6 +406,15 @@ def parse_prompt_variation_params(input_str: str) -> tuple[str, bool, str, str, 
 def _format_function_doc(
     functions: list[dict[str, Any]], function_doc_format: str
 ) -> str:
+    """Render function schemas in the requested documentation format.
+
+    Args:
+        functions: Function schemas.
+        function_doc_format: Target format (``python``, ``xml``, or ``json``).
+
+    Returns:
+        Rendered documentation string.
+    """
     if function_doc_format == "json":
         return json.dumps(functions, indent=4)
     if function_doc_format == "python":
@@ -284,7 +425,17 @@ def _format_function_doc(
 
 
 def _generate_function_doc_python(functions: list[dict[str, Any]]) -> str:
+    """Render function schemas as Python-style docstrings.
+
+    Args:
+        functions: Function schemas.
+
+    Returns:
+        Rendered Python documentation string.
+    """
+
     def _to_py_type(meta: dict[str, Any]) -> str:
+        """Convert a JSON schema type to a Python type annotation."""
         t = meta.get("type", "string")
         primitive_map = {
             "string": "str",
@@ -300,7 +451,7 @@ def _generate_function_doc_python(functions: list[dict[str, Any]]) -> str:
             return "dict"
         return t
 
-    INDENT = " " * 8
+    indent = " " * 8
     docs: list[str] = []
     for fn in functions:
         lines: list[str] = []
@@ -318,19 +469,29 @@ def _generate_function_doc_python(functions: list[dict[str, Any]]) -> str:
                 default_note = ""
                 if "default" in pmeta:
                     default_note = f", default={pmeta['default']!r}"
-                lines.append(f"{INDENT}{pname} ({py_type}{default_note}): {desc}\n")
+                lines.append(f"{indent}{pname} ({py_type}{default_note}): {desc}\n")
         lines.append('    """\n')
         docs.append("".join(lines))
     return "\n\n".join(docs)
 
 
 def _generate_function_doc_xml(functions: list[dict[str, Any]]) -> str:
+    """Render function schemas as XML documentation.
+
+    Args:
+        functions: Function schemas.
+
+    Returns:
+        Rendered XML documentation string.
+    """
+
     def _param_xml(
         name: str,
         meta: dict[str, Any],
         required_set: set[str] | None,
         indent_lvl: int = 2,
     ) -> str:
+        """Render a single parameter as XML."""
         indent = " " * indent_lvl * 2
         p_type = meta.get("type", "string")
         p_desc = meta.get("description", "")

@@ -28,6 +28,7 @@ Thumbs.db
 .codegraph/
 .claude/
 .opencode/
+.specify/
 
 # Package manager
 uv.lock

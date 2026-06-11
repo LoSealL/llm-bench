@@ -8,8 +8,6 @@ inference via the OpenAI-compatible client and scores predictions
 using the original metrics module.
 """
 
-from __future__ import annotations
-
 import importlib.util
 import re
 import sys
@@ -27,9 +25,11 @@ class _MockModule:
     """Minimal stand-in for ``torch`` so third-party imports succeed."""
 
     def __getattr__(self, name: str) -> Any:  # noqa: ANN401
+        """Return a mock object for any attribute access."""
         return _MockModule()
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
+        """Return a mock object for any call."""
         return _MockModule()
 
 
@@ -82,7 +82,6 @@ class LVEvalRunner:
         Returns:
             A 3-tuple of loaded module objects.
         """
-        # Mock heavy ML deps so scripts/LVEval/utils.py can import
         mocked: list[str] = []
         for mod in ("torch", "transformers"):
             if mod not in sys.modules:
@@ -144,7 +143,9 @@ class LVEvalRunner:
         )
         if self._limit is not None:
             datas = datas[: self._limit]
-        logger.info("Predicting LVEval dataset {} with {} samples", dataset_name, len(datas))
+        logger.info(
+            "Predicting LVEval dataset {} with {} samples", dataset_name, len(datas)
+        )
         dataset_base = re.split(r"_.{1,3}k", dataset_name)[0]
         prompt_format = self._config.DATASET_PROMPT[dataset_base]
         max_gen = self._config.DATASET_MAXGEN[dataset_base]
@@ -197,7 +198,9 @@ class LVEvalRunner:
         """
         dataset_base = re.split(r"_.{1,3}k", dataset_name)[0]
         metric_fn = self._config.DATASET_METRIC[dataset_base]
-        logger.debug("Scoring LVEval dataset {} ({} predictions)", dataset_name, len(preds))
+        logger.debug(
+            "Scoring LVEval dataset {} ({} predictions)", dataset_name, len(preds)
+        )
         total_score = 0.0
         total_sample = 0
         for item in preds:

@@ -7,17 +7,13 @@ runs. The HTML page uses Chart.js for bar charts and contains **no**
 raw per-sample data.
 """
 
-from __future__ import annotations
-
 import csv
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from loguru import logger
 
-if TYPE_CHECKING:
-    from llm_bench.runners import BenchmarkResults
+from llm_bench.runners import BenchmarkResults
 
 
 def ensure_dir(path: Path) -> None:
@@ -53,7 +49,6 @@ def generate_raw_csvs(results: BenchmarkResults, out_dir: Path) -> None:
     raw_dir = out_dir / "raw"
     ensure_dir(raw_dir)
 
-    # LVEval: dataset, length, score
     lveval_rows: list[list[str]] = []
     for ds, lengths in results.lveval.items():
         for length, score in lengths.items():
@@ -64,7 +59,6 @@ def generate_raw_csvs(results: BenchmarkResults, out_dir: Path) -> None:
         lveval_rows,
     )
 
-    # LongBench: difficulty, length, accuracy
     lb = results.longbench
     lb_rows: list[list[str]] = [
         ["overall", str(lb.get("overall", 0.0))],
@@ -80,7 +74,6 @@ def generate_raw_csvs(results: BenchmarkResults, out_dir: Path) -> None:
         lb_rows,
     )
 
-    # MathArena
     ma = results.matharena
     ma_rows: list[list[str]] = [
         ["accuracy", str(ma.get("accuracy", 0.0))],
@@ -93,7 +86,6 @@ def generate_raw_csvs(results: BenchmarkResults, out_dir: Path) -> None:
         ma_rows,
     )
 
-    # BFCL
     bfcl_rows: list[list[str]] = []
     for category, stats in results.bfcl.items():
         bfcl_rows.append(
@@ -124,7 +116,6 @@ def generate_html_report(results: BenchmarkResults, out_dir: Path) -> None:
     """
     ensure_dir(out_dir)
 
-    # Compute summary scores
     lveval_scores = [
         sum(lengths.values()) / len(lengths) if lengths else 0.0
         for lengths in results.lveval.values()
@@ -158,13 +149,30 @@ def generate_html_report(results: BenchmarkResults, out_dir: Path) -> None:
 <style>
   :root {{--bg:#fff;--fg:#1a1a2e;--accent:#4f46e5;--muted:#6b7280;}}
   * {{box-sizing:border-box;margin:0;padding:0;}}
-  body {{font-family:system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--fg);line-height:1.6;padding:2rem;}}
+  body {{
+    font-family:system-ui,-apple-system,sans-serif;
+    background:var(--bg);
+    color:var(--fg);
+    line-height:1.6;
+    padding:2rem;
+  }}
   .container {{max-width:960px;margin:0 auto;}}
   h1 {{font-size:1.75rem;margin-bottom:0.5rem;}}
   .subtitle {{color:var(--muted);margin-bottom:2rem;}}
-  .card {{background:#f8fafc;border-radius:0.75rem;padding:1.5rem;margin-bottom:1.5rem;box-shadow:0 1px 3px rgba(0,0,0,0.05);}}
+  .card {{
+    background:#f8fafc;
+    border-radius:0.75rem;
+    padding:1.5rem;
+    margin-bottom:1.5rem;
+    box-shadow:0 1px 3px rgba(0,0,0,0.05);
+  }}
   .card h2 {{font-size:1.125rem;margin-bottom:1rem;color:var(--accent);}}
-  .metric {{display:flex;justify-content:space-between;padding:0.5rem 0;border-bottom:1px solid #e5e7eb;}}
+  .metric {{
+    display:flex;
+    justify-content:space-between;
+    padding:0.5rem 0;
+    border-bottom:1px solid #e5e7eb;
+  }}
   .metric:last-child {{border-bottom:none;}}
   .metric span:first-child {{color:var(--muted);}}
   .metric span:last-child {{font-weight:600;}}
@@ -219,8 +227,10 @@ def generate_html_report(results: BenchmarkResults, out_dir: Path) -> None:
     <div class="metric"><span>Average Accuracy</span><span>{bfcl_avg:.1f}%</span></div>
     {
         "".join(
-            f'<div class="metric"><span>{cat}</span><span>{stats.get("accuracy", 0.0) * 100:.1f}% '
-            f"({stats.get('correct_count', 0)}/{stats.get('total_count', 0)})</span></div>"
+            f'<div class="metric"><span>{cat}</span><span>'
+            f'{stats.get("accuracy", 0.0) * 100:.1f}% '
+            f"({stats.get('correct_count', 0)}/"
+            f"{stats.get('total_count', 0)})</span></div>"
             for cat, stats in results.bfcl.items()
         )
     }
@@ -243,7 +253,13 @@ def generate_html_report(results: BenchmarkResults, out_dir: Path) -> None:
     options:{{
       responsive:true,
       maintainAspectRatio:false,
-      scales:{{y:{{beginAtZero:true,max:100,title:{{display:true,text:'Score / Accuracy (%)'}}}}}},
+      scales:{{
+        y:{{
+          beginAtZero:true,
+          max:100,
+          title:{{display:true,text:'Score / Accuracy (%)'}}
+        }}
+      }},,
       plugins:{{legend:{{display:false}}}}
     }}
   }});

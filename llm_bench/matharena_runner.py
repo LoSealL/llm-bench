@@ -6,8 +6,6 @@ Evaluates mathematical reasoning by exact-match on the final integer
 answer extracted from model output.
 """
 
-from __future__ import annotations
-
 import re
 from pathlib import Path
 from typing import Any

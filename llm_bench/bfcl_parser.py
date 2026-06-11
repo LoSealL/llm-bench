@@ -5,8 +5,6 @@
 Ported from bfcl-lite for standalone evaluation.
 """
 
-from __future__ import annotations
-
 import ast
 import json
 import re
@@ -79,6 +77,14 @@ def ast_parse(
 
 
 def _resolve_ast_call(elem: ast.Call) -> dict[str, Any]:
+    """Convert an ``ast.Call`` node into a function-call dictionary.
+
+    Args:
+        elem: AST call expression.
+
+    Returns:
+        Dictionary mapping function name to keyword arguments.
+    """
     func_parts: list[str] = []
     func_part = elem.func
     while isinstance(func_part, ast.Attribute):
@@ -95,6 +101,14 @@ def _resolve_ast_call(elem: ast.Call) -> dict[str, Any]:
 
 
 def _safe_eval_binop(node: ast.BinOp) -> Any:
+    """Evaluate a simple binary operation AST node.
+
+    Args:
+        node: Binary operation AST node.
+
+    Returns:
+        Result of the binary operation.
+    """
     left = _resolve_ast_by_type(node.left)
     right = _resolve_ast_by_type(node.right)
     if isinstance(node.op, ast.Add):
@@ -115,6 +129,14 @@ def _safe_eval_binop(node: ast.BinOp) -> Any:
 
 
 def _resolve_ast_by_type(value: ast.AST) -> Any:
+    """Recursively resolve an AST node to its Python value.
+
+    Args:
+        value: AST node to resolve.
+
+    Returns:
+        Python value represented by the node.
+    """
     if isinstance(value, ast.Constant):
         if value.value is ...:
             return "..."
@@ -158,6 +180,14 @@ def _resolve_ast_by_type(value: ast.AST) -> Any:
 
 
 def _parse_json_function_call(input_str: str) -> list[dict[str, Any]]:
+    """Parse a JSON-encoded function call string.
+
+    Args:
+        input_str: JSON array of function calls.
+
+    Returns:
+        List of function-call dictionaries.
+    """
     data = json.loads(input_str)
     if not isinstance(data, list):
         data = [data]
@@ -173,6 +203,14 @@ def _parse_json_function_call(input_str: str) -> list[dict[str, Any]]:
 
 
 def _parse_verbose_xml_function_call(xml_str: str) -> list[dict[str, Any]]:
+    """Parse a verbose XML function call representation.
+
+    Args:
+        xml_str: XML string containing ``<functions>``.
+
+    Returns:
+        List of function-call dictionaries.
+    """
     root = ET.fromstring(xml_str)
     result: list[dict[str, Any]] = []
     for func in root.findall("function"):
@@ -192,6 +230,14 @@ def _parse_verbose_xml_function_call(xml_str: str) -> list[dict[str, Any]]:
 
 
 def _parse_concise_xml_function_call(xml_str: str) -> list[dict[str, Any]]:
+    """Parse a concise XML function call representation.
+
+    Args:
+        xml_str: XML string containing ``<functions>``.
+
+    Returns:
+        List of function-call dictionaries.
+    """
     root = ET.fromstring(xml_str)
     result: list[dict[str, Any]] = []
     for func in root.findall("function"):
@@ -209,6 +255,15 @@ def _parse_concise_xml_function_call(xml_str: str) -> list[dict[str, Any]]:
 
 
 def _convert_xml_value(value: str | None, ptype: str) -> Any:
+    """Convert an XML parameter value to its native Python type.
+
+    Args:
+        value: Raw XML attribute or text value.
+        ptype: Declared parameter type.
+
+    Returns:
+        Native Python representation of the value.
+    """
     if value is None:
         return None
     if ptype == "integer":

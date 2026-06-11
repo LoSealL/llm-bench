@@ -6,7 +6,6 @@ Opt-in orchestration for LVEval, LongBench-v2, MathArena, and BFCL v4
 evaluations; generates a consolidated report for selected benchmarks.
 """
 
-from __future__ import annotations
 
 import argparse
 from dataclasses import replace
@@ -64,7 +63,7 @@ def parse_args() -> argparse.Namespace:
         default=32000,
         help="Maximum token length for prompt truncation.",
     )
-    _LVEVAL_DATASETS = [
+    lveval_datasets = [
         "hotpotwikiqa_mixup",
         "loogle_SD_mixup",
         "loogle_CR_mixup",
@@ -77,13 +76,13 @@ def parse_args() -> argparse.Namespace:
         "lic_mixup",
         "dureader_mixup",
     ]
-    _LVEVAL_LENGTHS = ["16k", "32k", "64k", "128k", "256k"]
-    _BFCL_CATEGORIES = ALL_CATEGORIES + list(TEST_COLLECTION_MAPPING.keys())
+    lveval_lengths = ["16k", "32k", "64k", "128k", "256k"]
+    bfcl_categories = ALL_CATEGORIES + list(TEST_COLLECTION_MAPPING.keys())
 
     parser.add_argument(
         "--lveval-datasets",
         nargs="+",
-        choices=_LVEVAL_DATASETS,
+        choices=lveval_datasets,
         default=None,
         metavar="DATASET",
         help="LVEval dataset base names to evaluate (default: all).",
@@ -91,7 +90,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--lveval-lengths",
         nargs="+",
-        choices=_LVEVAL_LENGTHS,
+        choices=lveval_lengths,
         default=["64k"],
         metavar="LENGTH",
         help="LVEval length levels (default: 64k).",
@@ -119,7 +118,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--bfcl-categories",
         nargs="+",
-        choices=_BFCL_CATEGORIES,
+        choices=bfcl_categories,
         default=None,
         metavar="CATEGORY",
         help="BFCL categories to evaluate (default: simple_python multiple).",
@@ -138,7 +137,6 @@ def main() -> None:
     args = parse_args()
     config = load_config()
 
-    # Allow CLI overrides of config values
     if args.base_url is not None:
         config = replace(config, base_url=args.base_url)
     if args.api_key is not None:
@@ -146,7 +144,6 @@ def main() -> None:
     if args.model is not None:
         config = replace(config, model=args.model)
 
-    # Initialise shared client
     client = LLMClient(config)
 
     results = BenchmarkResults(model=config.model)

@@ -5,14 +5,8 @@
 Ported from bfcl-lite for standalone evaluation.
 """
 
-from __future__ import annotations
-
 from enum import Enum
 from pathlib import Path
-
-# ============================================================================
-# Enums
-# ============================================================================
 
 
 class Language(Enum):
@@ -29,10 +23,6 @@ class ReturnFormat(Enum):
     VERBOSE_XML = "verbose_xml"
     CONCISE_XML = "concise_xml"
 
-
-# ============================================================================
-# Category Mapping
-# ============================================================================
 
 VERSION_PREFIX = "BFCL_v4"
 
@@ -63,41 +53,79 @@ TEST_COLLECTION_MAPPING = {
     "non_live": NON_LIVE_CATEGORY,
 }
 
-# ============================================================================
-# Paths
-# ============================================================================
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DATA_ROOT = REPO_ROOT / "scripts" / "BFCL"
 PROMPT_PATH = DATA_ROOT / "prompts"
 POSSIBLE_ANSWER_PATH = DATA_ROOT / "ground_truth"
 
-# ============================================================================
-# Default Prompts
-# ============================================================================
-
 OUTPUT_FORMAT_MAPPING = {
-    "python": "[func_name1(params_name1=params_value1, params_name2=params_value2...), func_name2(params)]",
-    "json": '```json\n[{"function":"func_name1","parameters":{"param1":"value1","param2":"value2"...}},{"function":"func_name2","parameters":{"param":"value"}}]\n```',
-    "verbose_xml": '<functions><function name="func_name1"><params><param name="param1" value="value1" type="type1"/><param name="param2" value="value2" type="type2"/>...</params></function><function name="func_name2"><params><param name="param3" value="value3" type="type3"/></params></function></functions>',
-    "concise_xml": '<functions><function name="func_name1"><param name="param1" type="type1">value1</param><param name="param2" type="type2">value2</param>...</function><function name="func_name2"><param name="param3" type="type3">value</param></function></functions>',
+    "python": (
+        "[func_name1(params_name1=params_value1, params_name2=params_value2...), "
+        "func_name2(params)]"
+    ),
+    "json": (
+        '```json\n[{"function":"func_name1","parameters":{"param1":"value1",'
+        '"param2":"value2"...}},{"function":"func_name2","parameters":'
+        '{"param":"value"}}]\n```'
+    ),
+    "verbose_xml": (
+        '<functions><function name="func_name1"><params><param name="param1" '
+        'value="value1" type="type1"/><param name="param2" value="value2" '
+        'type="type2"/>...</params></function><function name="func_name2">'
+        '<params><param name="param3" value="value3" type="type3"/></params>'
+        '</function></functions>'
+    ),
+    "concise_xml": (
+        '<functions><function name="func_name1"><param name="param1" '
+        'type="type1">value1</param><param name="param2" type="type2">value2'
+        '</param>...</function><function name="func_name2"><param name="param3" '
+        'type="type3">value</param></function></functions>'
+    ),
 }
 
 PARAM_TYPE_MAPPING = {
     "python": "",
     "json": "",
-    "verbose_xml": "The type fields of the parameters in your function calls must be one of: string, integer, float, boolean, array, dict, or tuple.",
-    "concise_xml": "The type fields of the parameters in your function calls must be one of: string, integer, float, boolean, array, dict, or tuple.",
+    "verbose_xml": (
+        "The type fields of the parameters in your function calls must be one of: "
+        "string, integer, float, boolean, array, dict, or tuple."
+    ),
+    "concise_xml": (
+        "The type fields of the parameters in your function calls must be one of: "
+        "string, integer, float, boolean, array, dict, or tuple."
+    ),
 }
 
 PROMPT_STYLE_TEMPLATES = {
     "classic": {
         "persona": "You are an expert in composing functions.",
-        "task": "You are given a question and a set of possible functions. Based on the question, you will need to make one or more function/tool calls to achieve the purpose. If none of the functions can be used, point it out. If the given question lacks the parameters required by the function, also point it out.",
-        "tool_call_no_tag": "You should only return the function calls in your response.\n\nIf you decide to invoke any of the function(s), you MUST put it in the format of {output_format}. {param_types} You SHOULD NOT include any other text in the response.",
-        "tool_call_with_tag": "You should only return the function calls in the <TOOLCALL> section. If you decide to invoke any of the function(s), you MUST put it in the format of <TOOLCALL>{output_format}</TOOLCALL>. {param_types} You SHOULD NOT include any other text in the response.",
-        "multiturn_behavior": "At each turn, you should try your best to complete the tasks requested by the user within the current turn.",
-        "available_tools": "Here is a list of functions in {format} format that you can invoke.\n{functions}\n",
+        "task": (
+            "You are given a question and a set of possible functions. "
+            "Based on the question, you will need to make one or more "
+            "function/tool calls to achieve the purpose. If none of the "
+            "functions can be used, point it out. If the given question "
+            "lacks the parameters required by the function, also point it out."
+        ),
+        "tool_call_no_tag": (
+            "You should only return the function calls in your response.\n\n"
+            "If you decide to invoke any of the function(s), you MUST put it in "
+            "the format of {output_format}. {param_types} You SHOULD NOT include "
+            "any other text in the response."
+        ),
+        "tool_call_with_tag": (
+            "You should only return the function calls in the <TOOLCALL> section. "
+            "If you decide to invoke any of the function(s), you MUST put it in "
+            "the format of <TOOLCALL>{output_format}</TOOLCALL>. {param_types} "
+            "You SHOULD NOT include any other text in the response."
+        ),
+        "multiturn_behavior": (
+            "At each turn, you should try your best to complete the "
+            "tasks requested by the user within the current turn."
+        ),
+        "available_tools": (
+            "Here is a list of functions in {format} format "
+            "that you can invoke.\n{functions}\n"
+        ),
     },
 }
 
@@ -109,4 +137,10 @@ PROMPT_TEMPLATE_MAPPING = {
     "plaintext": _PLAINTEXT_SYSTEM_PROMPT_TEMPLATE,
 }
 
-DEFAULT_SYSTEM_PROMPT_FORMAT = "ret_fmt=python&tool_call_tag=False&func_doc_fmt=json&prompt_fmt=plaintext&style=classic"
+DEFAULT_SYSTEM_PROMPT_FORMAT = (
+    "ret_fmt=python"
+    "&tool_call_tag=False"
+    "&func_doc_fmt=json"
+    "&prompt_fmt=plaintext"
+    "&style=classic"
+)

@@ -7,8 +7,6 @@ modifying third-party code, then evaluates the model on the
 LongBench-v2 multiple-choice dataset.
 """
 
-from __future__ import annotations
-
 import re
 from pathlib import Path
 from typing import Any
@@ -86,7 +84,6 @@ class LongBenchRunner:
             Uppercase letter ``A``-``D``, or ``None``.
         """
         cleaned = response.replace("*", "")
-        # Explicit format required by the prompt template
         for pattern in (
             r"The correct answer is \(([A-D])\)",
             r"The correct answer is ([A-D])",
@@ -95,7 +92,6 @@ class LongBenchRunner:
             match = re.search(pattern, cleaned)
             if match:
                 return match.group(1)
-        # Fallback: last standalone uppercase letter A-D
         letters = re.findall(r"\b([A-D])\b", cleaned)
         return letters[-1] if letters else None
 

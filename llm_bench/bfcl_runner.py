@@ -6,8 +6,7 @@ Evaluates function-calling ability via prompting mode using the
 OpenAI-compatible client.
 """
 
-from __future__ import annotations
-
+import json
 from pathlib import Path
 from typing import Any
 
@@ -61,6 +60,14 @@ class MockHandler:
 def _decoded_output_to_execution_list(
     decoded_output: list[dict[str, Any]],
 ) -> list[str]:
+    """Convert decoded function calls to executable Python strings.
+
+    Args:
+        decoded_output: List of function-call dictionaries.
+
+    Returns:
+        List of strings like ``func_name(arg=value)``.
+    """
     execution_list: list[str] = []
     for function_call in decoded_output:
         for key, value in function_call.items():
@@ -72,6 +79,14 @@ def _decoded_output_to_execution_list(
 
 
 def _parse_nested_value(value: Any) -> str:
+    """Recursively render a parameter value as a Python literal.
+
+    Args:
+        value: Parameter value of any type.
+
+    Returns:
+        Python source representation of the value.
+    """
     if isinstance(value, dict):
         if all(isinstance(v, dict) for v in value.values()):
             func_name = list(value.keys())[0]
@@ -104,7 +119,7 @@ class BFCLRunner:
         output_dir: str | Path,
         categories: list[str] | None = None,
         limit: int | None = None,
-            max_tokens: int = 32000,
+        max_tokens: int = 32000,
     ) -> None:
         """Prepare the runner.
 
@@ -211,6 +226,12 @@ class BFCLRunner:
         all_results: dict[str, dict[str, Any]] = {}
         for category in self._categories:
             predictions = self._predict_category(category)
+
+            out_path = self._output_dir / f"{category}.jsonl"
+            with out_path.open("w", encoding="utf-8") as fh:
+                for p in predictions:
+                    fh.write(json.dumps(p, ensure_ascii=False) + "\n")
+            logger.info("Saved {} raw predictions to {}", len(predictions), out_path)
 
             stats = self._score_category(category, predictions)
             all_results[category] = stats

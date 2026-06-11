@@ -73,7 +73,7 @@ OUTPUT_FORMAT_MAPPING = {
         'value="value1" type="type1"/><param name="param2" value="value2" '
         'type="type2"/>...</params></function><function name="func_name2">'
         '<params><param name="param3" value="value3" type="type3"/></params>'
-        '</function></functions>'
+        "</function></functions>"
     ),
     "concise_xml": (
         '<functions><function name="func_name1"><param name="param1" '

@@ -36,6 +36,8 @@ class MathArenaRunner(BaseRunner):
         client: LLMClient,
         output_dir: str | Path,
         limit: int | None = None,
+        max_tokens: int = 1024,
+        temperature: float = 0.0,
     ) -> None:
         """Prepare the runner.
 
@@ -44,8 +46,12 @@ class MathArenaRunner(BaseRunner):
             output_dir: Base output directory; results are written to
                 ``output_dir/matharena/``.
             limit: If set, evaluate only the first *N* samples.
+            max_tokens: If set, override the default generation limit.
+            temperature: If set, override the default sampling temperature.
         """
         super().__init__(client, output_dir, "matharena", limit)
+        self._max_tokens = max_tokens
+        self._temperature = temperature
 
     def _build_prompt(self, problem: str) -> str:
         """Wrap a problem statement with the system instruction.
@@ -89,8 +95,8 @@ class MathArenaRunner(BaseRunner):
             prompt = self._build_prompt(row["problem"])
             response = self._client.chat(
                 prompt,
-                max_tokens=1024,
-                temperature=0.1,
+                max_tokens=self._max_tokens,
+                temperature=self._temperature,
             )
             pred = self._extract_number(response)
             answer = str(row["answer"])

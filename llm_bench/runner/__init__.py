@@ -7,6 +7,7 @@ import line.
 """
 
 from llm_bench.runner.bfcl import BFCLRunner
+from llm_bench.runner.comparebench import CompareBenchRunner
 from llm_bench.runner.lveval import LVEvalRunner
 from llm_bench.runner.longbench import LongBenchRunner
 from llm_bench.runner.matharena import MathArenaRunner
@@ -14,6 +15,7 @@ from llm_bench.runner.simplevqa import SimpleVQARunner
 
 __all__ = [
     "BFCLRunner",
+    "CompareBenchRunner",
     "LVEvalRunner",
     "LongBenchRunner",
     "MathArenaRunner",

@@ -119,6 +119,32 @@ def generate_raw_csvs(results: BenchmarkResults, out_dir: Path) -> None:
         simplevqa_rows,
     )
 
+    cb = results.comparebench
+    cb_rows: list[list[str]] = []
+    cb_overall = cb.get("overall", {})
+    cb_rows.append(
+        [
+            "overall",
+            str(cb_overall.get("accuracy", 0.0)),
+            str(cb_overall.get("correct", 0)),
+            str(cb_overall.get("total", 0)),
+        ]
+    )
+    for split, stats in cb.get("by_split", {}).items():
+        cb_rows.append(
+            [
+                split,
+                str(stats.get("accuracy", 0.0)),
+                str(stats.get("correct", 0)),
+                str(stats.get("total", 0)),
+            ]
+        )
+    _write_csv(
+        raw_dir / "comparebench_results.csv",
+        ["split", "accuracy", "correct", "total"],
+        cb_rows,
+    )
+
 
 def generate_html_report(results: BenchmarkResults, out_dir: Path) -> None:
     """Render a summarised HTML report with Chart.js bar charts.
@@ -150,13 +176,24 @@ def generate_html_report(results: BenchmarkResults, out_dir: Path) -> None:
     simplevqa_overall = results.simplevqa.get("overall", {})
     simplevqa_acc = simplevqa_overall.get("accuracy", 0.0)
 
-    labels = ["LVEval", "LongBench-v2", "MathArena", "BFCL v4", "SimpleVQA"]
+    cb_overall = results.comparebench.get("overall", {})
+    cb_acc = cb_overall.get("accuracy", 0.0)
+
+    labels = [
+        "LVEval",
+        "LongBench-v2",
+        "MathArena",
+        "BFCL v4",
+        "SimpleVQA",
+        "CompareBench",
+    ]
     values = [
         round(lveval_avg, 2),
         round(lb_overall, 2),
         round(ma_acc, 2),
         round(bfcl_avg, 2),
         round(simplevqa_acc, 2),
+        round(cb_acc, 2),
     ]
     chart_data = json.dumps({"labels": labels, "values": values})
 
@@ -249,7 +286,7 @@ def generate_html_report(results: BenchmarkResults, out_dir: Path) -> None:
     {
         "".join(
             f'<div class="metric"><span>{cat}</span><span>'
-            f'{stats.get("accuracy", 0.0) * 100:.1f}% '
+            f"{stats.get('accuracy', 0.0) * 100:.1f}% "
             f"({stats.get('correct_count', 0)}/"
             f"{stats.get('total_count', 0)})</span></div>"
             for cat, stats in results.bfcl.items()
@@ -259,17 +296,35 @@ def generate_html_report(results: BenchmarkResults, out_dir: Path) -> None:
 
   <div class="card">
     <h2>SimpleVQA Summary</h2>
-    <div class="metric"><span>Overall Accuracy</span><span>{simplevqa_acc:.1f}%</span></div>
+    <div class="metric"><span>Overall Accuracy</span><span>{
+        simplevqa_acc:.1f}%</span></div>
     <div class="metric"><span>Correct</span><span>{
         simplevqa_overall.get("correct", 0)
     }/{simplevqa_overall.get("total", 0)}</span></div>
     {
         "".join(
             f'<div class="metric"><span>{cat}</span><span>'
-            f'{stats.get("accuracy", 0.0):.1f}% '
+            f"{stats.get('accuracy', 0.0):.1f}% "
             f"({stats.get('correct', 0)}/"
             f"{stats.get('total', 0)})</span></div>"
             for cat, stats in results.simplevqa.get("by_category", {}).items()
+        )
+    }
+  </div>
+
+  <div class="card">
+    <h2>CompareBench Summary</h2>
+    <div class="metric"><span>Overall Accuracy</span><span>{cb_acc:.1f}%</span></div>
+    <div class="metric"><span>Correct</span><span>{cb_overall.get("correct", 0)}/{
+        cb_overall.get("total", 0)
+    }</span></div>
+    {
+        "".join(
+            f'<div class="metric"><span>{split}</span><span>'
+            f"{stats.get('accuracy', 0.0):.1f}% "
+            f"({stats.get('correct', 0)}/"
+            f"{stats.get('total', 0)})</span></div>"
+            for split, stats in results.comparebench.get("by_split", {}).items()
         )
     }
   </div>
@@ -284,7 +339,7 @@ def generate_html_report(results: BenchmarkResults, out_dir: Path) -> None:
       datasets:[{{
         label:'Score',
         data:data.values,
-        backgroundColor:['#4f46e5','#06b6d4','#10b981','#f59e0b','#ec4899'],
+        backgroundColor:['#4f46e5','#06b6d4','#10b981','#f59e0b','#ec4899','#8b5cf6'],
         borderRadius:6,
       }}]
     }},

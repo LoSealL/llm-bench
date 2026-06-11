@@ -52,6 +52,8 @@ class LVEvalRunner(BaseRunner):
         output_dir: str | Path,
         max_length: int = 32000,
         limit: int | None = None,
+        max_tokens: int = 1024,
+        temperature: float = 0.0,
     ) -> None:
         """Prepare the runner.
 
@@ -62,9 +64,13 @@ class LVEvalRunner(BaseRunner):
             max_length: Token budget for prompt truncation.
             limit: If set, evaluate only the first *N* samples per
                 dataset (useful for quick smoke tests).
+            max_tokens: Maximum new tokens to generate.
+            temperature: Sampling temperature.
         """
         super().__init__(client, output_dir, "lveval", limit)
         self._max_length = max_length
+        self._max_tokens = max_tokens
+        self._temperature = temperature
 
         repo_root = Path(__file__).resolve().parents[2]
         self._scripts_dir = repo_root / "scripts" / "LVEval"
@@ -144,7 +150,6 @@ class LVEvalRunner(BaseRunner):
         )
         dataset_base = re.split(r"_.{1,3}k", dataset_name)[0]
         prompt_format = self._config.DATASET_PROMPT[dataset_base]
-        max_gen = self._config.DATASET_MAXGEN[dataset_base]
 
         preds: list[dict[str, Any]] = []
         for json_obj in tqdm(datas, desc=dataset_name):
@@ -155,8 +160,8 @@ class LVEvalRunner(BaseRunner):
             )
             raw_pred = self._client.chat(
                 prompt,
-                max_tokens=max_gen,
-                temperature=0.1,
+                max_tokens=self._max_tokens,
+                temperature=self._temperature,
             )
             pred = self._utils.post_process(raw_pred, self._client._model)
             preds.append(

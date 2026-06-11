@@ -34,6 +34,8 @@ class LongBenchRunner(BaseRunner):
         client: LLMClient,
         output_dir: str | Path,
         limit: int | None = None,
+        max_tokens: int = 1024,
+        temperature: float = 0.0,
     ) -> None:
         """Prepare the runner.
 
@@ -42,8 +44,12 @@ class LongBenchRunner(BaseRunner):
             output_dir: Base output directory; predictions are written
                 to ``output_dir/longbench/``.
             limit: If set, evaluate only the first *N* samples.
+            max_tokens: Maximum new tokens to generate.
+            temperature: Sampling temperature.
         """
         super().__init__(client, output_dir, "longbench", limit)
+        self._max_tokens = max_tokens
+        self._temperature = temperature
 
         repo_root = Path(__file__).resolve().parents[2]
         prompt_path = repo_root / "scripts" / "LongBench" / "prompts" / "0shot.txt"
@@ -128,8 +134,8 @@ class LongBenchRunner(BaseRunner):
             prompt = self._client.truncate_prompt(prompt, 32000)
             response = self._client.chat(
                 prompt,
-                max_tokens=128,
-                temperature=0.1,
+                max_tokens=self._max_tokens,
+                temperature=self._temperature,
             )
             pred = self._extract_answer(response)
             results.append(
@@ -184,11 +190,21 @@ class LongBenchRunner(BaseRunner):
         total = len(data)
         return {
             "overall": self._accuracy(total_correct, total, decimals=1),
-            "easy": self._accuracy(counters["easy"]["correct"], counters["easy"]["total"], decimals=1),
-            "hard": self._accuracy(counters["hard"]["correct"], counters["hard"]["total"], decimals=1),
-            "short": self._accuracy(counters["short"]["correct"], counters["short"]["total"], decimals=1),
-            "medium": self._accuracy(counters["medium"]["correct"], counters["medium"]["total"], decimals=1),
-            "long": self._accuracy(counters["long"]["correct"], counters["long"]["total"], decimals=1),
+            "easy": self._accuracy(
+                counters["easy"]["correct"], counters["easy"]["total"], decimals=1
+            ),
+            "hard": self._accuracy(
+                counters["hard"]["correct"], counters["hard"]["total"], decimals=1
+            ),
+            "short": self._accuracy(
+                counters["short"]["correct"], counters["short"]["total"], decimals=1
+            ),
+            "medium": self._accuracy(
+                counters["medium"]["correct"], counters["medium"]["total"], decimals=1
+            ),
+            "long": self._accuracy(
+                counters["long"]["correct"], counters["long"]["total"], decimals=1
+            ),
         }
 
     def run(self, **kwargs: Any) -> dict[str, float]:

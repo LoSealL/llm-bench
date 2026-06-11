@@ -570,9 +570,7 @@ def _list_checker(
         standardize_possible_answer.append([])
         for _, val in enumerate(ans):
             if isinstance(val, str):
-                standardize_possible_answer[i].append(
-                    _standardize_string(val)
-                )
+                standardize_possible_answer[i].append(_standardize_string(val))
             else:
                 standardize_possible_answer[i].append(val)
     if standardize_model_output not in standardize_possible_answer:

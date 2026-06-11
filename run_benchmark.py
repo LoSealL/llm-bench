@@ -6,7 +6,6 @@ Opt-in orchestration for LVEval, LongBench-v2, MathArena, and BFCL v4
 evaluations; generates a consolidated report for selected benchmarks.
 """
 
-
 import argparse
 import sys
 from dataclasses import replace
@@ -20,6 +19,7 @@ from llm_bench.config import load_config
 from llm_bench.reporter import generate_html_report, generate_raw_csvs
 from llm_bench.runner import (
     BFCLRunner,
+    CompareBenchRunner,
     LVEvalRunner,
     LongBenchRunner,
     MathArenaRunner,
@@ -67,6 +67,18 @@ def parse_args() -> argparse.Namespace:
         default=32000,
         help="Maximum token length for prompt truncation.",
     )
+    parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=None,
+        help="Override max output tokens for all runners.",
+    )
+    parser.add_argument(
+        "--temperature",
+        type=float,
+        default=0,
+        help="Override sampling temperature for all runners.",
+    )
     lveval_datasets = [
         "hotpotwikiqa_mixup",
         "loogle_SD_mixup",
@@ -82,6 +94,14 @@ def parse_args() -> argparse.Namespace:
     ]
     lveval_lengths = ["16k", "32k", "64k", "128k", "256k"]
     bfcl_categories = ALL_CATEGORIES + list(TEST_COLLECTION_MAPPING.keys())
+    comparebench_splits = [
+        "CompareTallyBench",
+        "CompareGeometryBench",
+        "CompareSpatialBench",
+        "CompareHistBench",
+        "CompareCelebrityBench",
+        "CompareLandmarkBench",
+    ]
 
     parser.add_argument(
         "--lveval-datasets",
@@ -126,6 +146,19 @@ def parse_args() -> argparse.Namespace:
         default=None,
         metavar="CATEGORY",
         help="BFCL categories to evaluate (default: simple_python multiple).",
+    )
+    parser.add_argument(
+        "--comparebench",
+        action="store_true",
+        help="Run the CompareBench benchmark.",
+    )
+    parser.add_argument(
+        "--comparebench-splits",
+        nargs="+",
+        choices=comparebench_splits,
+        default=None,
+        metavar="SPLIT",
+        help="CompareBench splits to evaluate (default: all).",
     )
     parser.add_argument(
         "--simplevqa",
@@ -186,18 +219,30 @@ def main() -> None:
 
     logger.info("Running benchmarks for model {}", config.model)
     logger.debug(
-        "Active benchmarks: lveval={} longbench={} matharena={} bfcl={} simplevqa={}",
+        "Active benchmarks: lveval={} longbench={} matharena={} bfcl={} "
+        "simplevqa={} comparebench={}",
         args.lveval,
         args.longbench,
         args.matharena,
         args.bfcl,
         args.simplevqa,
+        args.comparebench,
     )
 
-    if not any([args.lveval, args.longbench, args.matharena, args.bfcl, args.simplevqa]):
+    if not any(
+        [
+            args.lveval,
+            args.longbench,
+            args.matharena,
+            args.bfcl,
+            args.simplevqa,
+            args.comparebench,
+        ]
+    ):
         logger.warning(
             "No benchmark selected. Use --lveval, --longbench, --matharena, "
-            "--bfcl, and/or --simplevqa to choose which benchmarks to run."
+            "--bfcl, --simplevqa, and/or --comparebench to choose which "
+            "benchmarks to run."
         )
         return
 
@@ -208,6 +253,8 @@ def main() -> None:
             args.output_dir,
             max_length=args.max_length,
             limit=args.limit,
+            max_tokens=args.max_tokens,
+            temperature=args.temperature,
         )
         results.lveval = lveval.run(
             selected=args.lveval_datasets,
@@ -220,6 +267,8 @@ def main() -> None:
             client,
             args.output_dir,
             limit=args.limit,
+            max_tokens=args.max_tokens,
+            temperature=args.temperature,
         )
         results.longbench = longbench.run()
 
@@ -229,6 +278,8 @@ def main() -> None:
             client,
             args.output_dir,
             limit=args.limit,
+            max_tokens=args.max_tokens,
+            temperature=args.temperature,
         )
         results.matharena = matharena.run()
 
@@ -239,7 +290,8 @@ def main() -> None:
             args.output_dir,
             categories=args.bfcl_categories,
             limit=args.limit,
-            max_tokens=args.max_length,
+            max_tokens=args.max_tokens,
+            temperature=args.temperature,
         )
         results.bfcl = bfcl.run()
 
@@ -249,10 +301,27 @@ def main() -> None:
             client,
             args.output_dir,
             limit=args.limit,
+            max_tokens=args.max_tokens,
+            temperature=args.temperature,
             image_width=args.image_width,
             image_height=args.image_height,
         )
         results.simplevqa = simplevqa.run()
+
+    if args.comparebench:
+        logger.info("Running CompareBench")
+        comparebench = CompareBenchRunner(
+            client,
+            args.output_dir,
+            limit=args.limit,
+            max_tokens=args.max_tokens,
+            temperature=args.temperature,
+            image_width=args.image_width,
+            image_height=args.image_height,
+        )
+        results.comparebench = comparebench.run(
+            selected_splits=args.comparebench_splits,
+        )
 
     logger.info("Generating reports")
     out_dir = Path(args.output_dir)

@@ -34,6 +34,7 @@ class BenchmarkResults:
     matharena: dict[str, Any] = field(default_factory=dict)
     bfcl: dict[str, Any] = field(default_factory=dict)
     simplevqa: dict[str, Any] = field(default_factory=dict)
+    comparebench: dict[str, Any] = field(default_factory=dict)
 
 
 class BaseRunner(ABC):

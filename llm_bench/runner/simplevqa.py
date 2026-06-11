@@ -33,16 +33,15 @@ class SimpleVQARunner(BaseRunner):
         _max_tokens: Maximum new tokens for answer generation.
     """
 
-    _SYSTEM_PROMPT = (
-        "请根据图片内容回答问题，直接给出答案即可，不要解释。"
-    )
+    _SYSTEM_PROMPT = "请根据图片内容回答问题，直接给出答案即可，不要解释。"
 
     def __init__(
         self,
         client: LLMClient,
         output_dir: str | Path,
         limit: int | None = None,
-        max_tokens: int = 512,
+        max_tokens: int = 1024,
+        temperature: float = 0.0,
         image_width: int | None = None,
         image_height: int | None = None,
     ) -> None:
@@ -54,11 +53,13 @@ class SimpleVQARunner(BaseRunner):
                 ``output_dir/simplevqa/``.
             limit: If set, cap the number of evaluated samples.
             max_tokens: Max new tokens for the answer generation.
+            temperature: If set, override the default sampling temperature.
             image_width: If set, resize images to this width.
             image_height: If set, resize images to this height.
         """
         super().__init__(client, output_dir, "simplevqa", limit)
         self._max_tokens = max_tokens
+        self._temperature = temperature
         self._image_size = (
             (image_width, image_height)
             if image_width is not None and image_height is not None
@@ -206,7 +207,7 @@ class SimpleVQARunner(BaseRunner):
             response = self._client.chat(
                 messages=messages,
                 max_tokens=self._max_tokens,
-                temperature=0.1,
+                temperature=self._temperature,
             )
             pred = self._extract_answer(response)
             answer = str(row.get("answer", "")).strip()
@@ -224,9 +225,7 @@ class SimpleVQARunner(BaseRunner):
             )
         return results
 
-    def _compute_stats(
-        self, data: list[dict[str, Any]]
-    ) -> dict[str, Any]:
+    def _compute_stats(self, data: list[dict[str, Any]]) -> dict[str, Any]:
         """Aggregate accuracy by category and overall.
 
         Args:
@@ -255,9 +254,7 @@ class SimpleVQARunner(BaseRunner):
             },
             "by_category": {
                 cat: {
-                    "accuracy": self._accuracy(
-                        stats["correct"], stats["total"]
-                    ),
+                    "accuracy": self._accuracy(stats["correct"], stats["total"]),
                     "correct": stats["correct"],
                     "total": stats["total"],
                 }

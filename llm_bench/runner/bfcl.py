@@ -118,7 +118,8 @@ class BFCLRunner(BaseRunner):
         output_dir: str | Path,
         categories: list[str] | None = None,
         limit: int | None = None,
-        max_tokens: int = 32000,
+        max_tokens: int = 1024,
+        temperature: float = 0.0,
     ) -> None:
         """Prepare the runner.
 
@@ -131,9 +132,11 @@ class BFCLRunner(BaseRunner):
             limit: If set, evaluate only the first *N* samples per
                 category.
             max_tokens: Maximum number of new tokens to generate.
+            temperature: Sampling temperature.
         """
         super().__init__(client, output_dir, "bfcl", limit)
         self._max_tokens = max_tokens
+        self._temperature = temperature
         if categories is None:
             categories = ["simple_python", "multiple"]
         self._categories = parse_test_category_argument(categories)
@@ -141,7 +144,7 @@ class BFCLRunner(BaseRunner):
             "BFCL runner initialised: categories={}, limit={}, max_tokens={}",
             self._categories,
             limit,
-            max_tokens,
+            self._max_tokens,
         )
 
     def _build_messages(self, entry: dict[str, Any]) -> list[dict[str, str]]:
@@ -180,7 +183,7 @@ class BFCLRunner(BaseRunner):
             raw_response = self._client.chat(
                 messages=messages,
                 max_tokens=self._max_tokens,
-                temperature=0.1,
+                temperature=self._temperature,
             )
             if not raw_response:
                 logger.warning("Empty response for entry {}", entry["id"])

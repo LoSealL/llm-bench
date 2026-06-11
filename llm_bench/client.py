@@ -65,7 +65,16 @@ class LLMClient:
             retries are exhausted.
         """
         if messages is not None:
-            prompt_text = "".join(m.get("content", "") for m in messages)
+            text_parts: list[str] = []
+            for m in messages:
+                content = m.get("content", "")
+                if isinstance(content, str):
+                    text_parts.append(content)
+                elif isinstance(content, list):
+                    for part in content:
+                        if isinstance(part, dict) and part.get("type") == "text":
+                            text_parts.append(str(part.get("text", "")))
+            prompt_text = "".join(text_parts)
         elif prompt is not None:
             prompt_text = prompt
             messages = [{"role": "user", "content": prompt}]

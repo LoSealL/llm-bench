@@ -15,10 +15,10 @@ from loguru import logger
 from tqdm import tqdm
 
 from llm_bench.client import LLMClient
-from llm_bench.reporter import ensure_dir
+from llm_bench.runners import BaseRunner
 
 
-class MathArenaRunner:
+class MathArenaRunner(BaseRunner):
     """Execute the MathArena AIME 2026 benchmark.
 
     Attributes:
@@ -45,10 +45,7 @@ class MathArenaRunner:
                 ``output_dir/matharena/``.
             limit: If set, evaluate only the first *N* samples.
         """
-        self._client = client
-        self._limit = limit
-        self._output_dir = Path(output_dir) / "matharena"
-        ensure_dir(self._output_dir)
+        super().__init__(client, output_dir, "matharena", limit)
 
     def _build_prompt(self, problem: str) -> str:
         """Wrap a problem statement with the system instruction.
@@ -108,18 +105,19 @@ class MathArenaRunner:
             )
         return results
 
-    def run(self) -> dict[str, Any]:
+    def run(self, **kwargs: Any) -> dict[str, Any]:
         """Run the MathArena benchmark.
 
         Returns:
             Dictionary with keys ``accuracy``, ``correct``, ``total``.
         """
         data = self._predict()
+        self._write_jsonl(data, "predictions.jsonl")
 
         logger.debug("Computing MathArena accuracy for {} predictions", len(data))
         correct = sum(1 for item in data if item["correct"])
         total = len(data)
-        accuracy = round(100 * correct / total, 2) if total else 0.0
+        accuracy = self._accuracy(correct, total)
 
         logger.info("MathArena: {:.2f}% ({}/{})", accuracy, correct, total)
         return {

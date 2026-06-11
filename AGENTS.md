@@ -81,7 +81,6 @@ uv run python run_benchmark.py --model deepseek-chat --lveval --lveval-lengths 3
   """Module docstring."""
   ```
 - **Docstrings**: Google style for every module, class, and function
-- **Future annotations**: Start every file with `from __future__ import annotations`
 
 ## Design Patterns
 

@@ -16,15 +16,6 @@ from loguru import logger
 from llm_bench.runners import BenchmarkResults
 
 
-def ensure_dir(path: Path) -> None:
-    """Create a directory and all parents if they do not exist.
-
-    Args:
-        path: Directory path to create.
-    """
-    path.mkdir(parents=True, exist_ok=True)
-
-
 def _write_csv(path: Path, headers: list[str], rows: list[list[str]]) -> None:
     """Write a CSV file using the standard library.
 
@@ -47,7 +38,7 @@ def generate_raw_csvs(results: BenchmarkResults, out_dir: Path) -> None:
         out_dir: Directory where ``raw/`` will be created.
     """
     raw_dir = out_dir / "raw"
-    ensure_dir(raw_dir)
+    raw_dir.mkdir(parents=True, exist_ok=True)
 
     lveval_rows: list[list[str]] = []
     for ds, lengths in results.lveval.items():
@@ -102,6 +93,32 @@ def generate_raw_csvs(results: BenchmarkResults, out_dir: Path) -> None:
         bfcl_rows,
     )
 
+    simplevqa = results.simplevqa
+    simplevqa_rows: list[list[str]] = []
+    overall = simplevqa.get("overall", {})
+    simplevqa_rows.append(
+        [
+            "overall",
+            str(overall.get("accuracy", 0.0)),
+            str(overall.get("correct", 0)),
+            str(overall.get("total", 0)),
+        ]
+    )
+    for cat, stats in simplevqa.get("by_category", {}).items():
+        simplevqa_rows.append(
+            [
+                cat,
+                str(stats.get("accuracy", 0.0)),
+                str(stats.get("correct", 0)),
+                str(stats.get("total", 0)),
+            ]
+        )
+    _write_csv(
+        raw_dir / "simplevqa_results.csv",
+        ["category", "accuracy", "correct", "total"],
+        simplevqa_rows,
+    )
+
 
 def generate_html_report(results: BenchmarkResults, out_dir: Path) -> None:
     """Render a summarised HTML report with Chart.js bar charts.
@@ -114,7 +131,7 @@ def generate_html_report(results: BenchmarkResults, out_dir: Path) -> None:
         out_dir: Directory where ``benchmark_report.html`` will be
             written.
     """
-    ensure_dir(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
 
     lveval_scores = [
         sum(lengths.values()) / len(lengths) if lengths else 0.0
@@ -130,12 +147,16 @@ def generate_html_report(results: BenchmarkResults, out_dir: Path) -> None:
             bfcl_stats
         )
 
-    labels = ["LVEval", "LongBench-v2", "MathArena", "BFCL v4"]
+    simplevqa_overall = results.simplevqa.get("overall", {})
+    simplevqa_acc = simplevqa_overall.get("accuracy", 0.0)
+
+    labels = ["LVEval", "LongBench-v2", "MathArena", "BFCL v4", "SimpleVQA"]
     values = [
         round(lveval_avg, 2),
         round(lb_overall, 2),
         round(ma_acc, 2),
         round(bfcl_avg, 2),
+        round(simplevqa_acc, 2),
     ]
     chart_data = json.dumps({"labels": labels, "values": values})
 
@@ -235,6 +256,23 @@ def generate_html_report(results: BenchmarkResults, out_dir: Path) -> None:
         )
     }
   </div>
+
+  <div class="card">
+    <h2>SimpleVQA Summary</h2>
+    <div class="metric"><span>Overall Accuracy</span><span>{simplevqa_acc:.1f}%</span></div>
+    <div class="metric"><span>Correct</span><span>{
+        simplevqa_overall.get("correct", 0)
+    }/{simplevqa_overall.get("total", 0)}</span></div>
+    {
+        "".join(
+            f'<div class="metric"><span>{cat}</span><span>'
+            f'{stats.get("accuracy", 0.0):.1f}% '
+            f"({stats.get('correct', 0)}/"
+            f"{stats.get('total', 0)})</span></div>"
+            for cat, stats in results.simplevqa.get("by_category", {}).items()
+        )
+    }
+  </div>
 </div>
 
 <script>
@@ -246,7 +284,7 @@ def generate_html_report(results: BenchmarkResults, out_dir: Path) -> None:
       datasets:[{{
         label:'Score',
         data:data.values,
-        backgroundColor:['#4f46e5','#06b6d4','#10b981','#f59e0b'],
+        backgroundColor:['#4f46e5','#06b6d4','#10b981','#f59e0b','#ec4899'],
         borderRadius:6,
       }}]
     }},

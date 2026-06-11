@@ -8,19 +8,23 @@ evaluations; generates a consolidated report for selected benchmarks.
 
 
 import argparse
+import sys
 from dataclasses import replace
 from pathlib import Path
 
 from loguru import logger
 
 from llm_bench.bfcl_constants import ALL_CATEGORIES, TEST_COLLECTION_MAPPING
-from llm_bench.bfcl_runner import BFCLRunner
 from llm_bench.client import LLMClient
 from llm_bench.config import load_config
-from llm_bench.longbench_runner import LongBenchRunner
-from llm_bench.lveval_runner import LVEvalRunner
-from llm_bench.matharena_runner import MathArenaRunner
 from llm_bench.reporter import generate_html_report, generate_raw_csvs
+from llm_bench.runner import (
+    BFCLRunner,
+    LVEvalRunner,
+    LongBenchRunner,
+    MathArenaRunner,
+    SimpleVQARunner,
+)
 from llm_bench.runners import BenchmarkResults
 
 
@@ -124,12 +128,44 @@ def parse_args() -> argparse.Namespace:
         help="BFCL categories to evaluate (default: simple_python multiple).",
     )
     parser.add_argument(
+        "--simplevqa",
+        action="store_true",
+        help="Run the SimpleVQA benchmark.",
+    )
+    parser.add_argument(
+        "--image-width",
+        type=int,
+        default=None,
+        help="Resize VQA images to this width before sending.",
+    )
+    parser.add_argument(
+        "--image-height",
+        type=int,
+        default=None,
+        help="Resize VQA images to this height before sending.",
+    )
+    parser.add_argument(
         "--limit",
         type=int,
         default=None,
         help="Limit each dataset to the first N samples (for testing).",
     )
-    return parser.parse_args()
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="count",
+        default=0,
+        help="Increase verbosity (-v for DEBUG, -vv for TRACE).",
+    )
+    args = parser.parse_args()
+    logger.remove()
+    if args.verbose >= 2:
+        logger.add(sys.stderr, level="TRACE")
+    elif args.verbose == 1:
+        logger.add(sys.stderr, level="DEBUG")
+    else:
+        logger.add(sys.stderr, level="INFO")
+    return args
 
 
 def main() -> None:
@@ -150,17 +186,18 @@ def main() -> None:
 
     logger.info("Running benchmarks for model {}", config.model)
     logger.debug(
-        "Active benchmarks: lveval=%s longbench=%s matharena=%s bfcl=%s",
+        "Active benchmarks: lveval={} longbench={} matharena={} bfcl={} simplevqa={}",
         args.lveval,
         args.longbench,
         args.matharena,
         args.bfcl,
+        args.simplevqa,
     )
 
-    if not any([args.lveval, args.longbench, args.matharena, args.bfcl]):
+    if not any([args.lveval, args.longbench, args.matharena, args.bfcl, args.simplevqa]):
         logger.warning(
             "No benchmark selected. Use --lveval, --longbench, --matharena, "
-            "and/or --bfcl to choose which benchmarks to run."
+            "--bfcl, and/or --simplevqa to choose which benchmarks to run."
         )
         return
 
@@ -205,6 +242,17 @@ def main() -> None:
             max_tokens=args.max_length,
         )
         results.bfcl = bfcl.run()
+
+    if args.simplevqa:
+        logger.info("Running SimpleVQA")
+        simplevqa = SimpleVQARunner(
+            client,
+            args.output_dir,
+            limit=args.limit,
+            image_width=args.image_width,
+            image_height=args.image_height,
+        )
+        results.simplevqa = simplevqa.run()
 
     logger.info("Generating reports")
     out_dir = Path(args.output_dir)

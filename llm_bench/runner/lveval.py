@@ -18,7 +18,7 @@ from loguru import logger
 from tqdm import tqdm
 
 from llm_bench.client import LLMClient
-from llm_bench.reporter import ensure_dir
+from llm_bench.runners import BaseRunner
 
 
 class _MockModule:
@@ -33,7 +33,7 @@ class _MockModule:
         return _MockModule()
 
 
-class LVEvalRunner:
+class LVEvalRunner(BaseRunner):
     """Execute the LVEval benchmark suite.
 
     Attributes:
@@ -63,13 +63,10 @@ class LVEvalRunner:
             limit: If set, evaluate only the first *N* samples per
                 dataset (useful for quick smoke tests).
         """
-        self._client = client
+        super().__init__(client, output_dir, "lveval", limit)
         self._max_length = max_length
-        self._limit = limit
-        self._output_dir = Path(output_dir) / "lveval"
-        ensure_dir(self._output_dir)
 
-        repo_root = Path(__file__).resolve().parents[1]
+        repo_root = Path(__file__).resolve().parents[2]
         self._scripts_dir = repo_root / "scripts" / "LVEval"
         self._config, self._utils, self._metrics = self._load_third_party_modules()
 
@@ -141,8 +138,7 @@ class LVEvalRunner:
             dataset_name,
             data_path=f"data/lveval/{dataset_base}",
         )
-        if self._limit is not None:
-            datas = datas[: self._limit]
+        datas = self._apply_limit(datas)
         logger.info(
             "Predicting LVEval dataset {} with {} samples", dataset_name, len(datas)
         )
@@ -217,12 +213,13 @@ class LVEvalRunner:
                 )
                 break
             total_score += score
-        return round(100 * total_score / total_sample, 2)
+        return self._accuracy(total_score, total_sample)
 
     def run(
         self,
         selected: list[str] | None = None,
         lengths: list[str] | None = None,
+        **kwargs: Any,
     ) -> dict[str, dict[str, float]]:
         """Run the LVEval benchmark.
 
@@ -238,6 +235,7 @@ class LVEvalRunner:
 
         for dataset_name in datasets:
             preds = self._predict_dataset(dataset_name)
+            self._write_jsonl(preds, f"{dataset_name}.jsonl")
 
             score = self._score_dataset(dataset_name, preds)
             dataset_base = re.split(r"_.{1,3}k", dataset_name)[0]

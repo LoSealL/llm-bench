@@ -6,7 +6,6 @@ Evaluates function-calling ability via prompting mode using the
 OpenAI-compatible client.
 """
 
-import json
 from pathlib import Path
 from typing import Any
 
@@ -22,7 +21,7 @@ from llm_bench.bfcl_utils import (
     system_prompt_pre_processing_chat_model,
 )
 from llm_bench.client import LLMClient
-from llm_bench.reporter import ensure_dir
+from llm_bench.runners import BaseRunner
 
 
 class MockHandler:
@@ -103,7 +102,7 @@ def _parse_nested_value(value: Any) -> str:
     return repr(value)
 
 
-class BFCLRunner:
+class BFCLRunner(BaseRunner):
     """Execute the BFCL v4 benchmark suite.
 
     Attributes:
@@ -133,11 +132,8 @@ class BFCLRunner:
                 category.
             max_tokens: Maximum number of new tokens to generate.
         """
-        self._client = client
-        self._limit = limit
+        super().__init__(client, output_dir, "bfcl", limit)
         self._max_tokens = max_tokens
-        self._output_dir = Path(output_dir) / "bfcl"
-        ensure_dir(self._output_dir)
         if categories is None:
             categories = ["simple_python", "multiple"]
         self._categories = parse_test_category_argument(categories)
@@ -174,8 +170,8 @@ class BFCLRunner:
         """
         dataset = load_dataset_entry(category)
         logger.info("Loaded {} entries for category '{}'", len(dataset), category)
+        dataset = self._apply_limit(dataset)
         if self._limit is not None:
-            dataset = dataset[: self._limit]
             logger.info("Limited to {} samples", self._limit)
 
         results: list[dict[str, Any]] = []
@@ -216,7 +212,7 @@ class BFCLRunner:
         model_name = self._client._model
         return evaluate_task(category, predictions, model_name, handler)
 
-    def run(self) -> dict[str, dict[str, Any]]:
+    def run(self, **kwargs: Any) -> dict[str, dict[str, Any]]:
         """Run the BFCL v4 benchmark.
 
         Returns:
@@ -227,11 +223,7 @@ class BFCLRunner:
         for category in self._categories:
             predictions = self._predict_category(category)
 
-            out_path = self._output_dir / f"{category}.jsonl"
-            with out_path.open("w", encoding="utf-8") as fh:
-                for p in predictions:
-                    fh.write(json.dumps(p, ensure_ascii=False) + "\n")
-            logger.info("Saved {} raw predictions to {}", len(predictions), out_path)
+            self._write_jsonl(predictions, f"{category}.jsonl")
 
             stats = self._score_category(category, predictions)
             all_results[category] = stats

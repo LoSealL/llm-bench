@@ -2,10 +2,11 @@
 
 ## Project Overview
 
-LLM benchmark suite that evaluates models via OpenAI-compatible APIs against three datasets:
+LLM benchmark suite that evaluates models via OpenAI-compatible APIs against four datasets:
 - **LVEval** (`scripts/LVEval/`) — long-context QA benchmark
 - **LongBench-v2** (`scripts/LongBench/`) — multiple-choice long-context benchmark
 - **MathArena/aime_2026** (HuggingFace) — math reasoning benchmark
+- **BFCL v4** (`scripts/BFCL/`) — function-calling benchmark
 
 ## Critical Architecture Rule
 
@@ -21,12 +22,14 @@ llm-bench/
 ├── llm_bench/                 # Custom code only
 │   ├── config.py              # .env loader
 │   ├── client.py              # OpenAI client wrapper
+│   ├── bfcl_runner.py         # BFCL v4 evaluation
 │   ├── lveval_runner.py       # LVEval evaluation (imports scripts/LVEval/)
 │   ├── longbench_runner.py    # LongBench-v2 evaluation (reads scripts/LongBench/prompts/)
-│   ├── matharena_runner.py    # MathArena evaluation (new)
+│   ├── matharena_runner.py    # MathArena evaluation
 │   ├── reporter.py            # CSV + HTML report generation
 │   └── runners.py             # Shared types
-├── scripts/                   # THIRD-PARTY — DO NOT MODIFY
+├── scripts/                   # THIRD-PARTY — DO NOT MODIFY (except BFCL data)
+│   ├── BFCL/                  # BFCL v4 prompts and ground truth (ported data)
 │   ├── LVEval/
 │   └── LongBench/
 ├── .env                       # OPENAI_BASE_URL, OPENAI_API_KEY, OPENAI_MODEL
@@ -53,11 +56,17 @@ uv run ruff format llm_bench/ run_benchmark.py
 # Type check
 uv run pyright llm_bench/ run_benchmark.py
 
-# Run benchmarks
-uv run python run_benchmark.py
+# Run all benchmarks
+uv run python run_benchmark.py --lveval --longbench --matharena --bfcl
+
+# Run selected benchmarks
+uv run python run_benchmark.py --bfcl --bfcl-categories simple_python multiple
+
+# Override endpoint and model
+uv run python run_benchmark.py --base-url https://api.example.com --api-key sk-xxx --model gpt-4 --lveval --bfcl
 
 # Run with options
-uv run python run_benchmark.py --model deepseek-chat --lveval-lengths 32k 64k --skip-matharena
+uv run python run_benchmark.py --model deepseek-chat --lveval --lveval-lengths 32k 64k
 ```
 
 ## Code Style Requirements
@@ -117,5 +126,6 @@ Running benchmarks produces:
 - `results/lveval/*.jsonl` — raw predictions
 - `results/longbench/*.jsonl` — raw predictions
 - `results/matharena/results.jsonl` — raw predictions
+- `results/bfcl/*.jsonl` — raw predictions
 - `results/raw/*.csv` — per-dataset CSVs
 - `results/benchmark_report.html` — Chart.js dashboard (no raw data shown)

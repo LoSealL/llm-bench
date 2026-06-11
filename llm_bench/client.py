@@ -9,9 +9,10 @@ automatic retry logic and token-based prompt truncation.
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import tiktoken
+from loguru import logger
 from openai import OpenAI
 
 if TYPE_CHECKING:
@@ -44,16 +45,20 @@ class LLMClient:
 
     def chat(
         self,
-        prompt: str,
+        prompt: str | None = None,
         *,
+        messages: Any | None = None,
         max_tokens: int = 128,
         temperature: float = 0.1,
         max_retries: int = 5,
     ) -> str:
-        """Send a single-turn chat request with retries.
+        """Send a chat request with retries.
 
         Args:
-            prompt: Raw user message content.
+            prompt: Raw user message content. Used when ``messages`` is
+                not provided.
+            messages: Full message list to send directly. Takes precedence
+                over ``prompt``.
             max_tokens: Maximum number of *new* tokens to generate.
             temperature: Sampling temperature.
             max_retries: Number of retry attempts on transient failures.
@@ -62,26 +67,71 @@ class LLMClient:
             The assistant's textual response, or an empty string if all
             retries are exhausted.
         """
+        if messages is not None:
+            prompt_text = "".join(m.get("content", "") for m in messages)
+        elif prompt is not None:
+            prompt_text = prompt
+            messages = [{"role": "user", "content": prompt}]
+        else:
+            raise ValueError("Either 'prompt' or 'messages' must be provided.")
+
+        prompt_tokens = len(self._tokenizer.encode(prompt_text))
+        logger.trace(
+            "[REQUEST] POST {}  model={}  temperature={}  max_tokens={}  "
+            "prompt_tokens={}",
+            self._client.base_url,
+            self._model,
+            temperature,
+            max_tokens,
+            prompt_tokens,
+        )
+        payload = {
+            "model": self._model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
+        logger.trace("[REQUEST PAYLOAD] {}", payload)
+
         for attempt in range(1, max_retries + 1):
             try:
                 response = self._client.chat.completions.create(
                     model=self._model,
-                    messages=[{"role": "user", "content": prompt}],
+                    messages=messages,
                     temperature=temperature,
                     max_tokens=max_tokens,
                 )
+                usage = response.usage
+                finish_reason = response.choices[0].finish_reason
+                logger.trace(
+                    "[RESPONSE] finish_reason={}  "
+                    "prompt_tokens={}  completion_tokens={}  total_tokens={}",
+                    finish_reason,
+                    usage.prompt_tokens if usage else "N/A",
+                    usage.completion_tokens if usage else "N/A",
+                    usage.total_tokens if usage else "N/A",
+                )
+
                 msg = response.choices[0].message
                 content = msg.content
                 if content:
+                    logger.debug("Received response ({} chars)", len(content))
                     return content
                 # Some models (e.g. Qwen) put reasoning in reasoning_content
                 reasoning = getattr(msg, "reasoning_content", None)
-                return reasoning if reasoning else ""
+                if reasoning:
+                    logger.debug("Received reasoning_content instead of content")
+                    return reasoning
+                logger.warning("Empty response from model")
+                return ""
             except KeyboardInterrupt:
                 raise
             except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "API call failed (attempt {}/{}): {}", attempt, max_retries, exc
+                )
                 if attempt == max_retries:
-                    print(f"Max retries reached: {exc}")
+                    logger.error("Max retries reached, giving up: {}", exc)
                     return ""
                 time.sleep(1)
         return ""

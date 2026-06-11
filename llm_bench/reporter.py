@@ -14,6 +14,8 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from loguru import logger
+
 if TYPE_CHECKING:
     from llm_bench.runners import BenchmarkResults
 
@@ -91,6 +93,23 @@ def generate_raw_csvs(results: BenchmarkResults, out_dir: Path) -> None:
         ma_rows,
     )
 
+    # BFCL
+    bfcl_rows: list[list[str]] = []
+    for category, stats in results.bfcl.items():
+        bfcl_rows.append(
+            [
+                category,
+                str(round(stats.get("accuracy", 0.0) * 100, 2)),
+                str(stats.get("correct_count", 0)),
+                str(stats.get("total_count", 0)),
+            ]
+        )
+    _write_csv(
+        raw_dir / "bfcl_results.csv",
+        ["category", "accuracy", "correct", "total"],
+        bfcl_rows,
+    )
+
 
 def generate_html_report(results: BenchmarkResults, out_dir: Path) -> None:
     """Render a summarised HTML report with Chart.js bar charts.
@@ -113,9 +132,20 @@ def generate_html_report(results: BenchmarkResults, out_dir: Path) -> None:
     lveval_avg = sum(lveval_scores) / len(lveval_scores) if lveval_scores else 0.0
     lb_overall = results.longbench.get("overall", 0.0)
     ma_acc = results.matharena.get("accuracy", 0.0)
+    bfcl_stats = results.bfcl
+    bfcl_avg = 0.0
+    if bfcl_stats:
+        bfcl_avg = sum(s.get("accuracy", 0.0) * 100 for s in bfcl_stats.values()) / len(
+            bfcl_stats
+        )
 
-    labels = ["LVEval", "LongBench-v2", "MathArena"]
-    values = [round(lveval_avg, 2), round(lb_overall, 2), round(ma_acc, 2)]
+    labels = ["LVEval", "LongBench-v2", "MathArena", "BFCL v4"]
+    values = [
+        round(lveval_avg, 2),
+        round(lb_overall, 2),
+        round(ma_acc, 2),
+        round(bfcl_avg, 2),
+    ]
     chart_data = json.dumps({"labels": labels, "values": values})
 
     html = f"""<!DOCTYPE html>
@@ -164,17 +194,36 @@ def generate_html_report(results: BenchmarkResults, out_dir: Path) -> None:
   <div class="card">
     <h2>LongBench-v2 Summary</h2>
     <div class="metric"><span>Overall</span><span>{lb_overall:.1f}%</span></div>
-    <div class="metric"><span>Easy</span><span>{results.longbench.get("easy", 0.0):.1f}%</span></div>
-    <div class="metric"><span>Hard</span><span>{results.longbench.get("hard", 0.0):.1f}%</span></div>
-    <div class="metric"><span>Short</span><span>{results.longbench.get("short", 0.0):.1f}%</span></div>
-    <div class="metric"><span>Medium</span><span>{results.longbench.get("medium", 0.0):.1f}%</span></div>
-    <div class="metric"><span>Long</span><span>{results.longbench.get("long", 0.0):.1f}%</span></div>
+    <div class="metric"><span>Easy</span><span>{
+        results.longbench.get("easy", 0.0):.1f}%</span></div>
+    <div class="metric"><span>Hard</span><span>{
+        results.longbench.get("hard", 0.0):.1f}%</span></div>
+    <div class="metric"><span>Short</span><span>{
+        results.longbench.get("short", 0.0):.1f}%</span></div>
+    <div class="metric"><span>Medium</span><span>{
+        results.longbench.get("medium", 0.0):.1f}%</span></div>
+    <div class="metric"><span>Long</span><span>{
+        results.longbench.get("long", 0.0):.1f}%</span></div>
   </div>
 
   <div class="card">
     <h2>MathArena Summary</h2>
     <div class="metric"><span>Accuracy</span><span>{ma_acc:.1f}%</span></div>
-    <div class="metric"><span>Correct</span><span>{results.matharena.get("correct", 0)}/{results.matharena.get("total", 0)}</span></div>
+    <div class="metric"><span>Correct</span><span>{
+        results.matharena.get("correct", 0)
+    }/{results.matharena.get("total", 0)}</span></div>
+  </div>
+
+  <div class="card">
+    <h2>BFCL v4 Summary</h2>
+    <div class="metric"><span>Average Accuracy</span><span>{bfcl_avg:.1f}%</span></div>
+    {
+        "".join(
+            f'<div class="metric"><span>{cat}</span><span>{stats.get("accuracy", 0.0) * 100:.1f}% '
+            f"({stats.get('correct_count', 0)}/{stats.get('total_count', 0)})</span></div>"
+            for cat, stats in results.bfcl.items()
+        )
+    }
   </div>
 </div>
 
@@ -187,7 +236,7 @@ def generate_html_report(results: BenchmarkResults, out_dir: Path) -> None:
       datasets:[{{
         label:'Score',
         data:data.values,
-        backgroundColor:['#4f46e5','#06b6d4','#10b981'],
+        backgroundColor:['#4f46e5','#06b6d4','#10b981','#f59e0b'],
         borderRadius:6,
       }}]
     }},
@@ -204,4 +253,4 @@ def generate_html_report(results: BenchmarkResults, out_dir: Path) -> None:
 
     report_path = out_dir / "benchmark_report.html"
     report_path.write_text(html, encoding="utf-8")
-    print(f"Report saved to {report_path}")
+    logger.info("Report saved to {}", report_path)

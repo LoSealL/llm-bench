@@ -9,12 +9,12 @@ LongBench-v2 multiple-choice dataset.
 
 from __future__ import annotations
 
-import json
 import re
 from pathlib import Path
 from typing import Any
 
 from datasets import load_dataset  # type: ignore[import-untyped]
+from loguru import logger
 from tqdm import tqdm
 
 from llm_bench.client import LLMClient
@@ -107,25 +107,28 @@ class LongBenchRunner:
             ``judge``, and metadata fields.
         """
         dataset = load_dataset("THUDM/LongBench-v2", split="train")
-        data_all = [
-            {
-                "_id": item["_id"],
-                "domain": item["domain"],
-                "sub_domain": item["sub_domain"],
-                "difficulty": item["difficulty"],
-                "length": item["length"],
-                "question": item["question"],
-                "choice_A": item["choice_A"],
-                "choice_B": item["choice_B"],
-                "choice_C": item["choice_C"],
-                "choice_D": item["choice_D"],
-                "answer": item["answer"],
-                "context": item["context"],
-            }
-            for item in dataset
-        ]
+        data_all = []
+        for item in dataset:
+            row = dict(item)
+            data_all.append(
+                {
+                    "_id": row["_id"],
+                    "domain": row["domain"],
+                    "sub_domain": row["sub_domain"],
+                    "difficulty": row["difficulty"],
+                    "length": row["length"],
+                    "question": row["question"],
+                    "choice_A": row["choice_A"],
+                    "choice_B": row["choice_B"],
+                    "choice_C": row["choice_C"],
+                    "choice_D": row["choice_D"],
+                    "answer": row["answer"],
+                    "context": row["context"],
+                }
+            )
         if self._limit is not None:
-            data_all = data_all[:self._limit]
+            data_all = data_all[: self._limit]
+        logger.info("Loaded LongBench-v2 dataset with {} rows", len(data_all))
 
         results: list[dict[str, Any]] = []
         for item in tqdm(data_all, desc="LongBench-v2"):
@@ -160,6 +163,7 @@ class LongBenchRunner:
             Dictionary with keys ``overall``, ``easy``, ``hard``,
             ``short``, ``medium``, ``long``.
         """
+        logger.debug("Computing LongBench-v2 statistics for {} predictions", len(data))
         counters: dict[str, dict[str, float]] = {
             "easy": {"correct": 0.0, "total": 0.0},
             "hard": {"correct": 0.0, "total": 0.0},
@@ -215,21 +219,8 @@ class LongBenchRunner:
         Returns:
             Aggregated accuracy statistics.
         """
-        model_name = self._client._model
-        out_file = self._output_dir / f"{model_name}.jsonl"
-
-        if out_file.exists():
-            print("Loading cached LongBench-v2 predictions")
-            with out_file.open("r", encoding="utf-8") as fh:
-                data = [json.loads(line) for line in fh]
-        else:
-            data = self._predict()
-            with out_file.open("w", encoding="utf-8") as fh:
-                for item in data:
-                    fh.write(
-                        json.dumps(item, ensure_ascii=False) + "\n",
-                    )
+        data = self._predict()
 
         stats = self._compute_stats(data)
-        print(f"LongBench-v2 Overall: {stats['overall']:.1f}%")
+        logger.info("LongBench-v2 Overall: {:.1f}%", stats["overall"])
         return stats

@@ -8,12 +8,12 @@ answer extracted from model output.
 
 from __future__ import annotations
 
-import json
 import re
 from pathlib import Path
 from typing import Any
 
 from datasets import load_dataset  # type: ignore[import-untyped]
+from loguru import logger
 from tqdm import tqdm
 
 from llm_bench.client import LLMClient
@@ -86,20 +86,22 @@ class MathArenaRunner:
         dataset = load_dataset("MathArena/aime_2026", split="train")
         if self._limit is not None:
             dataset = dataset.select(range(min(self._limit, len(dataset))))
+        logger.info("Loaded MathArena dataset with {} rows", len(dataset))
         results: list[dict[str, Any]] = []
 
         for item in tqdm(dataset, desc="MathArena"):
-            prompt = self._build_prompt(item["problem"])
+            row = dict(item)
+            prompt = self._build_prompt(row["problem"])
             response = self._client.chat(
                 prompt,
                 max_tokens=1024,
                 temperature=0.1,
             )
             pred = self._extract_number(response)
-            answer = str(item["answer"])
+            answer = str(row["answer"])
             results.append(
                 {
-                    "problem_idx": item["problem_idx"],
+                    "problem_idx": row["problem_idx"],
                     "pred": pred,
                     "answer": answer,
                     "correct": pred == answer,
@@ -114,25 +116,14 @@ class MathArenaRunner:
         Returns:
             Dictionary with keys ``accuracy``, ``correct``, ``total``.
         """
-        out_file = self._output_dir / "results.jsonl"
+        data = self._predict()
 
-        if out_file.exists():
-            print("Loading cached MathArena predictions")
-            with out_file.open("r", encoding="utf-8") as fh:
-                data = [json.loads(line) for line in fh]
-        else:
-            data = self._predict()
-            with out_file.open("w", encoding="utf-8") as fh:
-                for item in data:
-                    fh.write(
-                        json.dumps(item, ensure_ascii=False) + "\n",
-                    )
-
+        logger.debug("Computing MathArena accuracy for {} predictions", len(data))
         correct = sum(1 for item in data if item["correct"])
         total = len(data)
         accuracy = round(100 * correct / total, 2) if total else 0.0
 
-        print(f"MathArena: {accuracy:.2f}% ({correct}/{total})")
+        logger.info("MathArena: {:.2f}% ({}/{})", accuracy, correct, total)
         return {
             "accuracy": accuracy,
             "correct": correct,

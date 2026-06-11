@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from dotenv import load_dotenv
+from loguru import logger
 
 
 @dataclass(frozen=True)
@@ -48,8 +49,10 @@ def load_config(dotenv_path: str | Path | None = None) -> BenchConfig:
     """
     if dotenv_path is not None:
         load_dotenv(dotenv_path=Path(dotenv_path))
+        logger.debug("Loaded .env from {}", dotenv_path)
     else:
         load_dotenv()
+        logger.debug("Loaded .env from working directory")
 
     base_url = os.getenv("OPENAI_BASE_URL")
     api_key = os.getenv("OPENAI_API_KEY")
@@ -65,11 +68,18 @@ def load_config(dotenv_path: str | Path | None = None) -> BenchConfig:
 
     if missing:
         msg = f"Missing environment variables: {', '.join(missing)}"
+        logger.error(msg)
         raise RuntimeError(msg)
 
     assert base_url is not None
     assert api_key is not None
     assert model is not None
+
+    logger.info(
+        "Configuration loaded: base_url={} model={}",
+        base_url.strip(),
+        model.strip(),
+    )
 
     return BenchConfig(
         base_url=base_url.strip(),

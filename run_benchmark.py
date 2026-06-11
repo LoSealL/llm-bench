@@ -2,15 +2,20 @@
 # SPDX-License-Identifier: MIT
 """Main CLI entry point for the LLM benchmark suite.
 
-Orchestrates LVEval, LongBench-v2, and MathArena evaluations and
-generates a consolidated report.
+Opt-in orchestration for LVEval, LongBench-v2, MathArena, and BFCL v4
+evaluations; generates a consolidated report for selected benchmarks.
 """
 
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 from pathlib import Path
 
+from loguru import logger
+
+from llm_bench.bfcl_constants import ALL_CATEGORIES, TEST_COLLECTION_MAPPING
+from llm_bench.bfcl_runner import BFCLRunner
 from llm_bench.client import LLMClient
 from llm_bench.config import load_config
 from llm_bench.longbench_runner import LongBenchRunner
@@ -30,6 +35,18 @@ def parse_args() -> argparse.Namespace:
         description="Run LLM benchmarks via OpenAI-compatible API.",
     )
     parser.add_argument(
+        "--base-url",
+        type=str,
+        default=None,
+        help="OpenAI-compatible API base URL (overrides OPENAI_BASE_URL from .env).",
+    )
+    parser.add_argument(
+        "--api-key",
+        type=str,
+        default=None,
+        help="API key for the endpoint (overrides OPENAI_API_KEY from .env).",
+    )
+    parser.add_argument(
         "--model",
         type=str,
         default=None,
@@ -47,32 +64,65 @@ def parse_args() -> argparse.Namespace:
         default=32000,
         help="Maximum token length for prompt truncation.",
     )
+    _LVEVAL_DATASETS = [
+        "hotpotwikiqa_mixup",
+        "loogle_SD_mixup",
+        "loogle_CR_mixup",
+        "loogle_MIR_mixup",
+        "multifieldqa_en_mixup",
+        "multifieldqa_zh_mixup",
+        "factrecall_en",
+        "factrecall_zh",
+        "cmrc_mixup",
+        "lic_mixup",
+        "dureader_mixup",
+    ]
+    _LVEVAL_LENGTHS = ["16k", "32k", "64k", "128k", "256k"]
+    _BFCL_CATEGORIES = ALL_CATEGORIES + list(TEST_COLLECTION_MAPPING.keys())
+
     parser.add_argument(
         "--lveval-datasets",
         nargs="+",
+        choices=_LVEVAL_DATASETS,
         default=None,
+        metavar="DATASET",
         help="LVEval dataset base names to evaluate (default: all).",
     )
     parser.add_argument(
         "--lveval-lengths",
         nargs="+",
+        choices=_LVEVAL_LENGTHS,
         default=["64k"],
+        metavar="LENGTH",
         help="LVEval length levels (default: 64k).",
     )
     parser.add_argument(
-        "--skip-lveval",
+        "--lveval",
         action="store_true",
-        help="Skip the LVEval benchmark.",
+        help="Run the LVEval benchmark.",
     )
     parser.add_argument(
-        "--skip-longbench",
+        "--longbench",
         action="store_true",
-        help="Skip the LongBench-v2 benchmark.",
+        help="Run the LongBench-v2 benchmark.",
     )
     parser.add_argument(
-        "--skip-matharena",
+        "--matharena",
         action="store_true",
-        help="Skip the MathArena benchmark.",
+        help="Run the MathArena benchmark.",
+    )
+    parser.add_argument(
+        "--bfcl",
+        action="store_true",
+        help="Run the BFCL v4 benchmark.",
+    )
+    parser.add_argument(
+        "--bfcl-categories",
+        nargs="+",
+        choices=_BFCL_CATEGORIES,
+        default=None,
+        metavar="CATEGORY",
+        help="BFCL categories to evaluate (default: simple_python multiple).",
     )
     parser.add_argument(
         "--limit",
@@ -88,19 +138,37 @@ def main() -> None:
     args = parse_args()
     config = load_config()
 
-    # Allow CLI override of the model name
-    model_name = args.model or config.model
+    # Allow CLI overrides of config values
+    if args.base_url is not None:
+        config = replace(config, base_url=args.base_url)
+    if args.api_key is not None:
+        config = replace(config, api_key=args.api_key)
+    if args.model is not None:
+        config = replace(config, model=args.model)
 
-    # Initialise shared client with the (possibly overridden) model
+    # Initialise shared client
     client = LLMClient(config)
-    client._model = model_name
 
-    results = BenchmarkResults(model=model_name)
+    results = BenchmarkResults(model=config.model)
 
-    if not args.skip_lveval:
-        print("=" * 60)
-        print("Running LVEval")
-        print("=" * 60)
+    logger.info("Running benchmarks for model {}", config.model)
+    logger.debug(
+        "Active benchmarks: lveval=%s longbench=%s matharena=%s bfcl=%s",
+        args.lveval,
+        args.longbench,
+        args.matharena,
+        args.bfcl,
+    )
+
+    if not any([args.lveval, args.longbench, args.matharena, args.bfcl]):
+        logger.warning(
+            "No benchmark selected. Use --lveval, --longbench, --matharena, "
+            "and/or --bfcl to choose which benchmarks to run."
+        )
+        return
+
+    if args.lveval:
+        logger.info("Running LVEval")
         lveval = LVEvalRunner(
             client,
             args.output_dir,
@@ -112,31 +180,40 @@ def main() -> None:
             lengths=args.lveval_lengths,
         )
 
-    if not args.skip_longbench:
-        print("=" * 60)
-        print("Running LongBench-v2")
-        print("=" * 60)
+    if args.longbench:
+        logger.info("Running LongBench-v2")
         longbench = LongBenchRunner(
-            client, args.output_dir, limit=args.limit,
+            client,
+            args.output_dir,
+            limit=args.limit,
         )
         results.longbench = longbench.run()
 
-    if not args.skip_matharena:
-        print("=" * 60)
-        print("Running MathArena")
-        print("=" * 60)
+    if args.matharena:
+        logger.info("Running MathArena")
         matharena = MathArenaRunner(
-            client, args.output_dir, limit=args.limit,
+            client,
+            args.output_dir,
+            limit=args.limit,
         )
         results.matharena = matharena.run()
 
-    print("=" * 60)
-    print("Generating reports")
-    print("=" * 60)
+    if args.bfcl:
+        logger.info("Running BFCL v4")
+        bfcl = BFCLRunner(
+            client,
+            args.output_dir,
+            categories=args.bfcl_categories,
+            limit=args.limit,
+            max_tokens=args.max_length,
+        )
+        results.bfcl = bfcl.run()
+
+    logger.info("Generating reports")
     out_dir = Path(args.output_dir)
     generate_raw_csvs(results, out_dir)
     generate_html_report(results, out_dir)
-    print("Done.")
+    logger.info("Done.")
 
 
 if __name__ == "__main__":

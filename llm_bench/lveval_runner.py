@@ -11,12 +11,12 @@ using the original metrics module.
 from __future__ import annotations
 
 import importlib.util
-import json
 import re
 import sys
 from pathlib import Path
 from typing import Any
 
+from loguru import logger
 from tqdm import tqdm
 
 from llm_bench.client import LLMClient
@@ -86,7 +86,7 @@ class LVEvalRunner:
         mocked: list[str] = []
         for mod in ("torch", "transformers"):
             if mod not in sys.modules:
-                sys.modules[mod] = _MockModule()
+                sys.modules[mod] = _MockModule()  # type: ignore[assignment]
                 mocked.append(mod)
         sys.path.insert(0, str(self._scripts_dir))
         try:
@@ -97,6 +97,7 @@ class LVEvalRunner:
             sys.path.pop(0)
             for mod in mocked:
                 sys.modules.pop(mod, None)
+        logger.debug("Loaded third-party LVEval modules: config, utils, metrics")
         return config, utils, metrics
 
     def _get_datasets(
@@ -142,7 +143,8 @@ class LVEvalRunner:
             data_path=f"data/lveval/{dataset_base}",
         )
         if self._limit is not None:
-            datas = datas[:self._limit]
+            datas = datas[: self._limit]
+        logger.info("Predicting LVEval dataset {} with {} samples", dataset_name, len(datas))
         dataset_base = re.split(r"_.{1,3}k", dataset_name)[0]
         prompt_format = self._config.DATASET_PROMPT[dataset_base]
         max_gen = self._config.DATASET_MAXGEN[dataset_base]
@@ -195,6 +197,7 @@ class LVEvalRunner:
         """
         dataset_base = re.split(r"_.{1,3}k", dataset_name)[0]
         metric_fn = self._config.DATASET_METRIC[dataset_base]
+        logger.debug("Scoring LVEval dataset {} ({} predictions)", dataset_name, len(preds))
         total_score = 0.0
         total_sample = 0
         for item in preds:
@@ -231,16 +234,7 @@ class LVEvalRunner:
         results: dict[str, dict[str, float]] = {}
 
         for dataset_name in datasets:
-            out_path = self._output_dir / f"{dataset_name}.jsonl"
-            if out_path.exists():
-                print(f"Loading cached predictions for {dataset_name}")
-                with out_path.open("r", encoding="utf-8") as fh:
-                    preds = [json.loads(line) for line in fh]
-            else:
-                preds = self._predict_dataset(dataset_name)
-                with out_path.open("w", encoding="utf-8") as fh:
-                    for p in preds:
-                        fh.write(json.dumps(p, ensure_ascii=False) + "\n")
+            preds = self._predict_dataset(dataset_name)
 
             score = self._score_dataset(dataset_name, preds)
             dataset_base = re.split(r"_.{1,3}k", dataset_name)[0]
@@ -248,6 +242,6 @@ class LVEvalRunner:
             if dataset_base not in results:
                 results[dataset_base] = {}
             results[dataset_base][length] = score
-            print(f"{dataset_name}: {score}")
+            logger.info("{}: {:.2f}", dataset_name, score)
 
         return results

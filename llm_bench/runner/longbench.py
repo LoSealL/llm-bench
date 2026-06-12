@@ -7,13 +7,10 @@ modifying third-party code, then evaluates the model on the
 LongBench-v2 multiple-choice dataset.
 """
 
-import re
 from pathlib import Path
 from typing import Any
 
-from datasets import load_dataset  # type: ignore[import-untyped]
 from loguru import logger
-from tqdm import tqdm
 
 from llm_bench.client import LLMClient
 from llm_bench.runners import BaseRunner
@@ -86,17 +83,14 @@ class LongBenchRunner(BaseRunner):
         Returns:
             Uppercase letter ``A``-``D``, or ``None``.
         """
-        cleaned = response.replace("*", "")
-        for pattern in (
-            r"The correct answer is \(([A-D])\)",
-            r"The correct answer is ([A-D])",
-            r"(?:答案是|Answer:|answer:)\s*\(?([A-D])\)?",
-        ):
-            match = re.search(pattern, cleaned)
-            if match:
-                return match.group(1)
-        letters = re.findall(r"\b([A-D])\b", cleaned)
-        return letters[-1] if letters else None
+        return BaseRunner._extract_letter_answer(
+            response,
+            patterns=[
+                r"The correct answer is \(([A-D])\)",
+                r"The correct answer is ([A-D])",
+                r"(?:答案是|Answer:|answer:)\s*\(?([A-D])\)?",
+            ],
+        )
 
     def _predict(self) -> list[dict[str, Any]]:
         """Run inference on the full LongBench-v2 dataset.
@@ -105,8 +99,12 @@ class LongBenchRunner(BaseRunner):
             List of result dictionaries with ``pred``, ``answer``,
             ``judge``, and metadata fields.
         """
-        dataset = load_dataset("THUDM/LongBench-v2", split="train")
-        data_all = []
+        dataset = self._load_hf_dataset(
+            "THUDM/LongBench-v2",
+            "train",
+            "LongBench-v2",
+        )
+        data_all: list[dict[str, Any]] = []
         for item in dataset:
             row = dict(item)
             data_all.append(
@@ -125,14 +123,12 @@ class LongBenchRunner(BaseRunner):
                     "context": row["context"],
                 }
             )
-        data_all = self._apply_limit(data_all)
-        logger.info("Loaded LongBench-v2 dataset with {} rows", len(data_all))
 
         results: list[dict[str, Any]] = []
-        for item in tqdm(data_all, desc="LongBench-v2"):
+        for item in self._progress(data_all, desc="LongBench-v2"):
             prompt = self._build_prompt(item)
             prompt = self._client.truncate_prompt(prompt, 32000)
-            response = self._client.chat(
+            response = self._chat(
                 prompt,
                 max_tokens=self._max_tokens,
                 temperature=self._temperature,
@@ -162,6 +158,8 @@ class LongBenchRunner(BaseRunner):
             ``short``, ``medium``, ``long``.
         """
         logger.debug("Computing LongBench-v2 statistics for {} predictions", len(data))
+        overall = self._overall_stats(data, correct_key="judge", decimals=1)
+
         counters: dict[str, dict[str, float]] = {
             "easy": {"correct": 0.0, "total": 0.0},
             "hard": {"correct": 0.0, "total": 0.0},
@@ -169,13 +167,9 @@ class LongBenchRunner(BaseRunner):
             "medium": {"correct": 0.0, "total": 0.0},
             "long": {"correct": 0.0, "total": 0.0},
         }
-        total_correct = 0.0
 
         for item in data:
-            acc = 1.0 if item["judge"] else 0.0
-            if item["pred"] is None:
-                acc = 0.0
-            total_correct += acc
+            acc = 1.0 if item["judge"] and item["pred"] is not None else 0.0
 
             diff = item["difficulty"]
             if diff in counters:
@@ -187,9 +181,8 @@ class LongBenchRunner(BaseRunner):
                 counters[length]["correct"] += acc
                 counters[length]["total"] += 1.0
 
-        total = len(data)
         return {
-            "overall": self._accuracy(total_correct, total, decimals=1),
+            "overall": overall["accuracy"],
             "easy": self._accuracy(
                 counters["easy"]["correct"], counters["easy"]["total"], decimals=1
             ),

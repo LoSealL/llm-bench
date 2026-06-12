@@ -2,13 +2,18 @@
 # SPDX-License-Identifier: MIT
 """Package-level shared types and helpers."""
 
+import base64
+import io
 import json
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any, Callable, TypeVar, cast
 
+from datasets import load_dataset  # type: ignore[import-untyped]
 from loguru import logger
+from PIL import Image  # type: ignore[import-untyped]
 from tqdm import tqdm
 
 from llm_bench.client import LLMClient
@@ -136,6 +141,240 @@ class BaseRunner(ABC):
             ``tqdm`` iterator.
         """
         return tqdm(iterable, desc=desc, **kwargs)
+
+    def _chat(
+        self,
+        prompt: str | None = None,
+        *,
+        messages: Any | None = None,
+        max_tokens: int = 1024,
+        temperature: float = 0.0,
+    ) -> str:
+        """Send a chat request through the wrapped client.
+
+        Logs a warning when the model returns an empty response so each
+        runner does not need to repeat the check.
+
+        Args:
+            prompt: Raw user message content. Used when ``messages`` is
+                not provided.
+            messages: Full message list to send directly. Takes precedence
+                over ``prompt``.
+            max_tokens: Maximum number of *new* tokens to generate.
+            temperature: Sampling temperature.
+
+        Returns:
+            The assistant's textual response, or an empty string.
+        """
+        response = self._client.chat(
+            prompt,
+            messages=messages,
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
+        if not response:
+            logger.warning("Empty response from model")
+        return response
+
+    def _load_hf_dataset(
+        self,
+        name: str,
+        split: str,
+        desc: str,
+    ) -> list[dict[str, Any]]:
+        """Load a HuggingFace dataset, apply the limit, and log.
+
+        Args:
+            name: HuggingFace dataset name.
+            split: Dataset split to load.
+            desc: Human-readable name used in log messages.
+
+        Returns:
+            List of dataset rows, capped at ``self._limit`` when set.
+        """
+        dataset = load_dataset(name, split=split)
+        if self._limit is not None and hasattr(dataset, "select"):
+            dataset = dataset.select(range(min(self._limit, len(dataset))))
+        data = cast(list[dict[str, Any]], list(dataset))
+        if self._limit is not None and len(data) > self._limit:
+            data = data[: self._limit]
+        logger.info("Loaded {} ({}) with {} rows", desc, name, len(data))
+        return data
+
+    @staticmethod
+    def _extract_letter_answer(
+        response: str,
+        patterns: list[str] | None = None,
+        fallback: bool = True,
+        flags: int = 0,
+    ) -> str | None:
+        """Extract a single-letter answer (A-D) from model output.
+
+        Args:
+            response: Raw model response.
+            patterns: Ordered list of regex patterns. The first capturing
+                group should contain the letter. Defaults to common
+                multiple-choice patterns.
+            fallback: If ``True``, scan for a standalone ``A``-``D`` letter
+                when none of the explicit patterns match.
+            flags: Regex flags forwarded to ``re.search`` and ``re.findall``.
+
+        Returns:
+            Uppercase letter ``A``-``D``, or ``None``.
+        """
+        if not response:
+            return None
+
+        cleaned = response.replace("*", "")
+        if patterns is None:
+            patterns = [
+                r"The correct answer is \(([A-D])\)",
+                r"The correct answer is ([A-D])",
+                r"(?:答案是|Answer:|answer:)\s*\(?([A-D])\)?",
+            ]
+        for pattern in patterns:
+            match = re.search(pattern, cleaned, flags)
+            if match:
+                return match.group(1).upper()
+
+        if fallback:
+            letters = re.findall(r"\b([A-D])\b", cleaned, flags)
+            if letters:
+                return letters[-1].upper()
+        return None
+
+    def _prepare_image_data_uri(
+        self,
+        image: str | Image.Image,
+        image_size: tuple[int, int] | None = None,
+    ) -> str:
+        """Convert an image to a JPEG data URI.
+
+        Accepts either a base64-encoded string (with or without a data URI
+        prefix) or a ``PIL.Image.Image``. The image is optionally resized
+        and always transcoded to JPEG for API compatibility.
+
+        Args:
+            image: Base64 string or PIL Image.
+            image_size: Optional ``(width, height)`` resize target.
+
+        Returns:
+            A ``data:image/jpeg;base64,...`` URI.
+        """
+        if isinstance(image, str):
+            if image.startswith("data:"):
+                return image
+            raw = base64.b64decode(image)
+            img = Image.open(io.BytesIO(raw))
+        else:
+            img = image
+
+        if image_size is not None:
+            resample = getattr(Image, "Resampling", Image).LANCZOS  # type: ignore[attr-defined]
+            img = img.resize(image_size, resample)
+            logger.debug("Resized image to {}x{}", *image_size)
+
+        buf = io.BytesIO()
+        rgb_img = img.convert("RGB")
+        rgb_img.save(buf, format="JPEG")
+        raw = buf.getvalue()
+        b64_out = base64.b64encode(raw).decode("ascii")
+        return f"data:image/jpeg;base64,{b64_out}"
+
+    def _build_vision_messages(
+        self,
+        data_uri: str,
+        question: str,
+        system_prompt: str,
+    ) -> list[dict[str, Any]]:
+        """Build OpenAI-compatible vision messages.
+
+        Args:
+            data_uri: Image data URI.
+            question: Question text.
+            system_prompt: System prompt content.
+
+        Returns:
+            Messages list with a system message and a multimodal user
+            message.
+        """
+        return [
+            {"role": "system", "content": system_prompt},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image_url", "image_url": {"url": data_uri}},
+                    {"type": "text", "text": question},
+                ],
+            },
+        ]
+
+    def _overall_stats(
+        self,
+        data: list[dict[str, Any]],
+        correct_key: str = "correct",
+        decimals: int = 2,
+    ) -> dict[str, Any]:
+        """Compute overall accuracy statistics.
+
+        Args:
+            data: Prediction records.
+            correct_key: Key holding the boolean correctness value.
+            decimals: Rounding precision for the accuracy percentage.
+
+        Returns:
+            Dictionary with ``accuracy``, ``correct``, and ``total``.
+        """
+        correct = sum(1 for item in data if item.get(correct_key))
+        total = len(data)
+        return {
+            "accuracy": self._accuracy(correct, total, decimals=decimals),
+            "correct": correct,
+            "total": total,
+        }
+
+    def _grouped_stats(
+        self,
+        data: list[dict[str, Any]],
+        group_fn: Callable[[dict[str, Any]], str],
+        correct_key: str = "correct",
+        group_label: str = "group",
+        decimals: int = 2,
+    ) -> dict[str, Any]:
+        """Compute overall and per-group accuracy statistics.
+
+        Args:
+            data: Prediction records.
+            group_fn: Callable that returns a group name for each record.
+            correct_key: Key holding the boolean correctness value.
+            group_label: Label used for the grouped result key.
+
+        Returns:
+            Dictionary with ``overall`` and ``by_<group_label>`` keys.
+        """
+        overall = self._overall_stats(data, correct_key)
+        by_group: dict[str, dict[str, int]] = {}
+        for item in data:
+            group = group_fn(item)
+            if group not in by_group:
+                by_group[group] = {"correct": 0, "total": 0}
+            by_group[group]["total"] += 1
+            if item.get(correct_key):
+                by_group[group]["correct"] += 1
+
+        return {
+            "overall": overall,
+            f"by_{group_label}": {
+                group: {
+                    "accuracy": self._accuracy(
+                        stats["correct"], stats["total"], decimals=decimals
+                    ),
+                    "correct": stats["correct"],
+                    "total": stats["total"],
+                }
+                for group, stats in by_group.items()
+            },
+        }
 
     @abstractmethod
     def run(self, **kwargs: Any) -> dict[str, Any]:

@@ -10,9 +10,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from datasets import load_dataset  # type: ignore[import-untyped]
 from loguru import logger
-from tqdm import tqdm
 
 from llm_bench.client import LLMClient
 from llm_bench.runners import BaseRunner
@@ -84,16 +82,17 @@ class MathArenaRunner(BaseRunner):
             List of dictionaries with ``problem_idx``, ``pred``,
             ``answer``, and ``correct`` fields.
         """
-        dataset = load_dataset("MathArena/aime_2026", split="train")
-        if self._limit is not None:
-            dataset = dataset.select(range(min(self._limit, len(dataset))))
-        logger.info("Loaded MathArena dataset with {} rows", len(dataset))
+        dataset = self._load_hf_dataset(
+            "MathArena/aime_2026",
+            "train",
+            "MathArena",
+        )
         results: list[dict[str, Any]] = []
 
-        for item in tqdm(dataset, desc="MathArena"):
+        for item in self._progress(dataset, desc="MathArena"):
             row = dict(item)
             prompt = self._build_prompt(row["problem"])
-            response = self._client.chat(
+            response = self._chat(
                 prompt,
                 max_tokens=self._max_tokens,
                 temperature=self._temperature,
@@ -121,13 +120,12 @@ class MathArenaRunner(BaseRunner):
         self._write_jsonl(data, "predictions.jsonl")
 
         logger.debug("Computing MathArena accuracy for {} predictions", len(data))
-        correct = sum(1 for item in data if item["correct"])
-        total = len(data)
-        accuracy = self._accuracy(correct, total)
+        stats = self._overall_stats(data)
 
-        logger.info("MathArena: {:.2f}% ({}/{})", accuracy, correct, total)
-        return {
-            "accuracy": accuracy,
-            "correct": correct,
-            "total": total,
-        }
+        logger.info(
+            "MathArena: {:.2f}% ({}/{})",
+            stats["accuracy"],
+            stats["correct"],
+            stats["total"],
+        )
+        return stats

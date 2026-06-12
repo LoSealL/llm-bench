@@ -8,17 +8,13 @@ OpenAI-compatible multimodal chat APIs.
 
 from __future__ import annotations
 
-import base64
-import io
 import re
 import string
 import unicodedata
 from pathlib import Path
 from typing import Any
 
-from datasets import load_dataset  # type: ignore[import-untyped]
 from loguru import logger
-from PIL import Image  # type: ignore[import-untyped]
 
 from llm_bench.client import LLMClient
 from llm_bench.runners import BaseRunner
@@ -66,38 +62,6 @@ class SimpleVQARunner(BaseRunner):
             else None
         )
 
-    def _prepare_image(self, b64_str: str) -> str:
-        """Decode base64, optionally resize, and return a JPEG data URI.
-
-        Some vision APIs do not support WebP; this helper always
-        transcodes to JPEG.  If ``self._image_size`` is set the image
-        is resized before encoding.
-
-        Args:
-            b64_str: Raw base64 string (without data URI prefix).
-
-        Returns:
-            A ``data:image/jpeg;base64,...`` URI.
-        """
-        if b64_str.startswith("data:"):
-            return b64_str
-
-        raw = base64.b64decode(b64_str)
-        img = Image.open(io.BytesIO(raw))
-
-        if self._image_size is not None:
-            resample = getattr(Image, "Resampling", Image).LANCZOS  # type: ignore[attr-defined]
-            img = img.resize(self._image_size, resample)
-            logger.debug("Resized image to {}x{}", *self._image_size)
-
-        buf = io.BytesIO()
-        rgb_img = img.convert("RGB")
-        rgb_img.save(buf, format="JPEG")
-        raw = buf.getvalue()
-
-        b64_out = base64.b64encode(raw).decode("ascii")
-        return f"data:image/jpeg;base64,{b64_out}"
-
     def _build_messages(self, image_b64: str, question: str) -> list[dict[str, Any]]:
         """Build multimodal messages for a VQA sample.
 
@@ -108,23 +72,8 @@ class SimpleVQARunner(BaseRunner):
         Returns:
             OpenAI-compatible messages list with image content.
         """
-        data_uri = self._prepare_image(image_b64)
-        return [
-            {
-                "role": "system",
-                "content": self._SYSTEM_PROMPT,
-            },
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": data_uri},
-                    },
-                    {"type": "text", "text": question},
-                ],
-            },
-        ]
+        data_uri = self._prepare_image_data_uri(image_b64, self._image_size)
+        return self._build_vision_messages(data_uri, question, self._SYSTEM_PROMPT)
 
     @staticmethod
     def _extract_answer(response: str) -> str:
@@ -196,15 +145,17 @@ class SimpleVQARunner(BaseRunner):
             ``pred``, ``answer``, ``correct``, ``response``,
             ``original_category``.
         """
-        dataset = load_dataset("m-a-p/SimpleVQA", split="test")
-        data_all = self._apply_limit(list(dataset))
-        logger.info("Loaded SimpleVQA with {} rows", len(data_all))
+        data_all = self._load_hf_dataset(
+            "m-a-p/SimpleVQA",
+            "test",
+            "SimpleVQA",
+        )
 
         results: list[dict[str, Any]] = []
         for item in self._progress(data_all, desc="SimpleVQA"):
             row = dict(item)
             messages = self._build_messages(row["image"], row["question"])
-            response = self._client.chat(
+            response = self._chat(
                 messages=messages,
                 max_tokens=self._max_tokens,
                 temperature=self._temperature,
@@ -234,33 +185,11 @@ class SimpleVQARunner(BaseRunner):
         Returns:
             Dictionary with ``overall`` and ``by_category`` keys.
         """
-        overall_correct = sum(1 for item in data if item["correct"])
-        overall_total = len(data)
-
-        by_category: dict[str, dict[str, Any]] = {}
-        for item in data:
-            cat = item["original_category"] or "unknown"
-            if cat not in by_category:
-                by_category[cat] = {"correct": 0, "total": 0}
-            by_category[cat]["total"] += 1
-            if item["correct"]:
-                by_category[cat]["correct"] += 1
-
-        return {
-            "overall": {
-                "accuracy": self._accuracy(overall_correct, overall_total),
-                "correct": overall_correct,
-                "total": overall_total,
-            },
-            "by_category": {
-                cat: {
-                    "accuracy": self._accuracy(stats["correct"], stats["total"]),
-                    "correct": stats["correct"],
-                    "total": stats["total"],
-                }
-                for cat, stats in by_category.items()
-            },
-        }
+        return self._grouped_stats(
+            data,
+            group_fn=lambda item: item.get("original_category") or "unknown",
+            group_label="category",
+        )
 
     def run(self, **kwargs: Any) -> dict[str, Any]:
         """Run the SimpleVQA benchmark.

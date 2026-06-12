@@ -14,7 +14,6 @@ import re
 from pathlib import Path
 from typing import Any
 
-from datasets import load_dataset  # type: ignore[import-untyped]
 from loguru import logger
 from PIL import Image  # type: ignore[import-untyped]
 
@@ -78,32 +77,6 @@ class CompareBenchRunner(BaseRunner):
             else None
         )
 
-    def _prepare_image(self, image: Image.Image) -> str:
-        """Convert a PIL Image to a JPEG data URI.
-
-        Some vision APIs do not support WebP; this helper always
-        transcodes to JPEG.  If ``self._image_size`` is set the image
-        is resized before encoding.
-
-        Args:
-            image: PIL Image instance.
-
-        Returns:
-            A ``data:image/jpeg;base64,...`` URI.
-        """
-        if self._image_size is not None:
-            resample = getattr(Image, "Resampling", Image).LANCZOS  # type: ignore[attr-defined]
-            image = image.resize(self._image_size, resample)
-            logger.debug("Resized image to {}x{}", *self._image_size)
-
-        buf = io.BytesIO()
-        rgb_img = image.convert("RGB")
-        rgb_img.save(buf, format="JPEG")
-        raw = buf.getvalue()
-
-        b64_out = base64.b64encode(raw).decode("ascii")
-        return f"data:image/jpeg;base64,{b64_out}"
-
     def _build_messages(
         self, image: Image.Image, question: str
     ) -> list[dict[str, Any]]:
@@ -116,23 +89,8 @@ class CompareBenchRunner(BaseRunner):
         Returns:
             OpenAI-compatible messages list with image content.
         """
-        data_uri = self._prepare_image(image)
-        return [
-            {
-                "role": "system",
-                "content": self._SYSTEM_PROMPT,
-            },
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": data_uri},
-                    },
-                    {"type": "text", "text": question},
-                ],
-            },
-        ]
+        data_uri = self._prepare_image_data_uri(image, self._image_size)
+        return self._build_vision_messages(data_uri, question, self._SYSTEM_PROMPT)
 
     @staticmethod
     def _extract_answer(response: str) -> str:
@@ -153,15 +111,18 @@ class CompareBenchRunner(BaseRunner):
         text = re.sub(r"<think>.*?</think>", "", response, flags=re.DOTALL)
         text = re.sub(r"```.*?```", "", text, flags=re.DOTALL)
 
-        patterns = [
-            r"(?:answer|choice|option)[\s:：是为]*([A-D])",
-            r"\(?([A-D])\)?",
-            r"([A-D])[.、)]",
-        ]
-        for pat in patterns:
-            m = re.search(pat, text, re.IGNORECASE)
-            if m:
-                return m.group(1).upper()
+        answer = BaseRunner._extract_letter_answer(
+            text,
+            patterns=[
+                r"(?:answer|choice|option)[\s:：是为]*([A-D])",
+                r"\(?([A-D])\)?",
+                r"([A-D])[.、)]",
+            ],
+            fallback=False,
+            flags=re.IGNORECASE,
+        )
+        if answer:
+            return answer
 
         cleaned = re.sub(r"[^A-Da-d]", "", text.strip())
         if len(cleaned) == 1:
@@ -178,17 +139,15 @@ class CompareBenchRunner(BaseRunner):
         Returns:
             List of prediction dicts.
         """
-        dataset = load_dataset("qiuzhangTiTi/CompareBench", split=split_name)
-        data_all = self._apply_limit(list(dataset))
-        logger.info(
-            "Loaded CompareBench {} with {} rows",
+        dataset = self._load_hf_dataset(
+            "qiuzhangTiTi/CompareBench",
             split_name,
-            len(data_all),
+            f"CompareBench/{split_name}",
         )
 
         results: list[dict[str, Any]] = []
         for idx, item in enumerate(
-            self._progress(data_all, desc=f"CompareBench/{split_name}")
+            self._progress(dataset, desc=f"CompareBench/{split_name}")
         ):
             row = dict(item)
             raw_image = row["image"]
@@ -201,7 +160,7 @@ class CompareBenchRunner(BaseRunner):
             assert isinstance(image, Image.Image)
 
             messages = self._build_messages(image, row["vlm_question"])
-            response = self._client.chat(
+            response = self._chat(
                 messages=messages,
                 max_tokens=self._max_tokens,
                 temperature=self._temperature,
@@ -231,33 +190,11 @@ class CompareBenchRunner(BaseRunner):
         Returns:
             Dictionary with ``overall`` and ``by_split`` keys.
         """
-        overall_correct = sum(1 for item in data if item["correct"])
-        overall_total = len(data)
-
-        by_split: dict[str, dict[str, int]] = {}
-        for item in data:
-            split = item["split"]
-            if split not in by_split:
-                by_split[split] = {"correct": 0, "total": 0}
-            by_split[split]["total"] += 1
-            if item["correct"]:
-                by_split[split]["correct"] += 1
-
-        return {
-            "overall": {
-                "accuracy": self._accuracy(overall_correct, overall_total),
-                "correct": overall_correct,
-                "total": overall_total,
-            },
-            "by_split": {
-                split: {
-                    "accuracy": self._accuracy(stats["correct"], stats["total"]),
-                    "correct": stats["correct"],
-                    "total": stats["total"],
-                }
-                for split, stats in by_split.items()
-            },
-        }
+        return self._grouped_stats(
+            data,
+            group_fn=lambda item: item["split"],
+            group_label="split",
+        )
 
     def run(
         self,

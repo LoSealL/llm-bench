@@ -15,7 +15,6 @@ from pathlib import Path
 from typing import Any
 
 from loguru import logger
-from tqdm import tqdm
 
 from llm_bench.client import LLMClient
 from llm_bench.runners import BaseRunner
@@ -152,13 +151,13 @@ class LVEvalRunner(BaseRunner):
         prompt_format = self._config.DATASET_PROMPT[dataset_base]
 
         preds: list[dict[str, Any]] = []
-        for json_obj in tqdm(datas, desc=dataset_name):
+        for json_obj in self._progress(datas, desc=dataset_name):
             prompt = prompt_format.format(**json_obj)
             prompt = self._client.truncate_prompt(
                 prompt,
                 self._max_length,
             )
-            raw_pred = self._client.chat(
+            raw_pred = self._chat(
                 prompt,
                 max_tokens=self._max_tokens,
                 temperature=self._temperature,

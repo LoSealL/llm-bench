@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import Any
 
 from loguru import logger
-from tqdm import tqdm
 
 from llm_bench.bfcl_constants import ReturnFormat
 from llm_bench.bfcl_eval import evaluate_task
@@ -178,9 +177,9 @@ class BFCLRunner(BaseRunner):
             logger.info("Limited to {} samples", self._limit)
 
         results: list[dict[str, Any]] = []
-        for entry in tqdm(dataset, desc=f"BFCL-{category}"):
+        for entry in self._progress(dataset, desc=f"BFCL-{category}"):
             messages = self._build_messages(entry)
-            raw_response = self._client.chat(
+            raw_response = self._chat(
                 messages=messages,
                 max_tokens=self._max_tokens,
                 temperature=self._temperature,

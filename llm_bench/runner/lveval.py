@@ -216,7 +216,6 @@ class LVEvalRunner(BaseRunner):
                         item.get("gold_ans"),
                     ),
                 )
-                break
             total_score += score
         return self._accuracy(total_score, total_sample)
 

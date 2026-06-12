@@ -281,5 +281,8 @@ def _convert_xml_value(value: str | None, ptype: str) -> Any:
         try:
             return json.loads(value)
         except Exception:
+            logger.warning(
+                "Failed to parse dict value {!r}, returning empty dict", value
+            )
             return {}
     return value

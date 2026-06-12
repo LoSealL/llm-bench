@@ -75,7 +75,7 @@ def evaluate_task(
     )
 
     if is_relevance_or_irrelevance(test_category):
-        model_result, prompt = _subset_entries(model_result, prompt, None)
+        prompt, _ = _subset_entries(model_result, prompt, None)
         accuracy, total_count, errors = _relevance_file_runner(
             handler, model_result, prompt, model_name, test_category
         )
@@ -491,7 +491,6 @@ def _type_checker(
         result["valid"] = False
         result["error"] = [f"Nested type checking failed for parameter {param!r}."]
         result["error_type"] = "type_error:nested"
-    possible_answer_type = _get_possible_answer_type(possible_answer)
     if possible_answer_type is not None and isinstance(value, possible_answer_type):
         result["is_variable"] = True
         return result

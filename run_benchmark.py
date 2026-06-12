@@ -70,8 +70,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--max-tokens",
         type=int,
-        default=None,
-        help="Override max output tokens for all runners.",
+        default=1024,
+        help="Override max output tokens for all runners (default: 1024).",
     )
     parser.add_argument(
         "--temperature",

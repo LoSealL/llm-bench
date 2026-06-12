@@ -352,7 +352,7 @@ def generate_html_report(results: BenchmarkResults, out_dir: Path) -> None:
           max:100,
           title:{{display:true,text:'Score / Accuracy (%)'}}
         }}
-      }},,
+      }},
       plugins:{{legend:{{display:false}}}}
     }}
   }});

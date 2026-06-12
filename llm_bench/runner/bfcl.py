@@ -20,7 +20,7 @@ from llm_bench.bfcl_utils import (
     system_prompt_pre_processing_chat_model,
 )
 from llm_bench.client import LLMClient
-from llm_bench.runners import BaseRunner
+from llm_bench.runners import BaseRunner, _JsonlWriter
 
 
 class MockHandler:
@@ -119,6 +119,8 @@ class BFCLRunner(BaseRunner):
         limit: int | None = None,
         max_tokens: int = 1024,
         temperature: float = 0.0,
+        *,
+        force: bool = False,
     ) -> None:
         """Prepare the runner.
 
@@ -132,8 +134,9 @@ class BFCLRunner(BaseRunner):
                 category.
             max_tokens: Maximum number of new tokens to generate.
             temperature: Sampling temperature.
+            force: If ``True``, re-run even when cached JSONL exists.
         """
-        super().__init__(client, output_dir, "bfcl", limit)
+        super().__init__(client, output_dir, "bfcl", limit, force=force)
         self._max_tokens = max_tokens
         self._temperature = temperature
         if categories is None:
@@ -161,11 +164,16 @@ class BFCLRunner(BaseRunner):
             messages, function_docs, entry["id"]
         )
 
-    def _predict_category(self, category: str) -> list[dict[str, Any]]:
+    def _predict_category(
+        self,
+        category: str,
+        writer: _JsonlWriter | None = None,
+    ) -> list[dict[str, Any]]:
         """Run inference on a single BFCL category.
 
         Args:
             category: BFCL category name.
+            writer: Optional streaming JSONL writer.
 
         Returns:
             List of prediction dicts with ``id`` and ``result`` keys.
@@ -190,14 +198,15 @@ class BFCLRunner(BaseRunner):
                     entry["id"],
                     response.finish_reason,
                 )
-            results.append(
-                {
-                    "id": entry["id"],
-                    "result": response.content,
-                    "valid": response.valid,
-                    "finish_reason": response.finish_reason,
-                }
-            )
+            record = {
+                "id": entry["id"],
+                "result": response.content,
+                "valid": response.valid,
+                "finish_reason": response.finish_reason,
+            }
+            results.append(record)
+            if writer is not None:
+                writer.write(record)
         logger.info(
             "Completed predictions for '{}' ({} samples)", category, len(results)
         )
@@ -232,9 +241,22 @@ class BFCLRunner(BaseRunner):
         """
         all_results: dict[str, dict[str, Any]] = {}
         for category in self._categories:
-            predictions = self._predict_category(category)
-
-            self._write_jsonl(predictions, f"{category}.jsonl")
+            filename = f"{category}.jsonl"
+            if not self._force:
+                existing = self._load_existing_jsonl(filename)
+                if existing is not None:
+                    logger.info(
+                        "Skipping BFCL {} — {} already exists (use --force to re-run)",
+                        category,
+                        filename,
+                    )
+                    predictions = existing
+                else:
+                    with self._open_jsonl(filename) as writer:
+                        predictions = self._predict_category(category, writer=writer)
+            else:
+                with self._open_jsonl(filename) as writer:
+                    predictions = self._predict_category(category, writer=writer)
 
             stats = self._score_category(category, predictions)
             all_results[category] = stats

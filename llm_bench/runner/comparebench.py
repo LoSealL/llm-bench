@@ -18,7 +18,7 @@ from loguru import logger
 from PIL import Image  # type: ignore[import-untyped]
 
 from llm_bench.client import LLMClient
-from llm_bench.runners import BaseRunner
+from llm_bench.runners import BaseRunner, _JsonlWriter
 
 _SPLITS = [
     "CompareTallyBench",
@@ -55,6 +55,8 @@ class CompareBenchRunner(BaseRunner):
         temperature: float = 0.0,
         image_width: int | None = None,
         image_height: int | None = None,
+        *,
+        force: bool = False,
     ) -> None:
         """Prepare the runner.
 
@@ -67,8 +69,9 @@ class CompareBenchRunner(BaseRunner):
             temperature: If set, override the default sampling temperature.
             image_width: If set, resize images to this width.
             image_height: If set, resize images to this height.
+            force: If ``True``, re-run even when cached JSONL exists.
         """
-        super().__init__(client, output_dir, "comparebench", limit)
+        super().__init__(client, output_dir, "comparebench", limit, force=force)
         self._max_tokens = max_tokens
         self._temperature = temperature
         self._image_size = (
@@ -141,11 +144,16 @@ class CompareBenchRunner(BaseRunner):
         """
         return pred.strip().upper() == answer.strip().upper()
 
-    def _predict_split(self, split_name: str) -> list[dict[str, Any]]:
+    def _predict_split(
+        self,
+        split_name: str,
+        writer: _JsonlWriter | None = None,
+    ) -> list[dict[str, Any]]:
         """Run inference on a single CompareBench split.
 
         Args:
             split_name: Name of the dataset split to evaluate.
+            writer: Optional streaming JSONL writer.
 
         Returns:
             List of prediction dicts.
@@ -193,21 +201,22 @@ class CompareBenchRunner(BaseRunner):
                 valid = False
 
             answer = str(row.get("gt_answer", "")).strip().upper()
-            results.append(
-                {
-                    "data_id": f"{split_name}_{idx}",
-                    "split": split_name,
-                    "image_name": row.get("image_name", ""),
-                    "question": row["vlm_question"],
-                    "pred": pred,
-                    "answer": answer,
-                    "correct": self._compare(pred, answer) if valid else False,
-                    "valid": valid,
-                    "image_valid": image_valid,
-                    "finish_reason": finish_reason,
-                    "response": response_text,
-                },
-            )
+            record = {
+                "data_id": f"{split_name}_{idx}",
+                "split": split_name,
+                "image_name": row.get("image_name", ""),
+                "question": row["vlm_question"],
+                "pred": pred,
+                "answer": answer,
+                "correct": self._compare(pred, answer) if valid else False,
+                "valid": valid,
+                "image_valid": image_valid,
+                "finish_reason": finish_reason,
+                "response": response_text,
+            }
+            results.append(record)
+            if writer is not None:
+                writer.write(record)
         return results
 
     def _compute_stats(self, data: list[dict[str, Any]]) -> dict[str, Any]:
@@ -241,12 +250,28 @@ class CompareBenchRunner(BaseRunner):
             Dictionary with keys ``overall`` and ``by_split``.
         """
         splits = selected_splits if selected_splits is not None else _SPLITS
-        all_results: list[dict[str, Any]] = []
-        for split_name in splits:
-            split_results = self._predict_split(split_name)
-            all_results.extend(split_results)
+        filename = "predictions.jsonl"
 
-        self._write_jsonl(all_results, "predictions.jsonl")
+        if not self._force:
+            existing = self._load_existing_jsonl(filename)
+            if existing is not None:
+                logger.info(
+                    "Skipping CompareBench — {} already exists (use --force to re-run)",
+                    filename,
+                )
+                all_results = existing
+            else:
+                all_results = []
+                with self._open_jsonl(filename) as writer:
+                    for split_name in splits:
+                        split_results = self._predict_split(split_name, writer=writer)
+                        all_results.extend(split_results)
+        else:
+            all_results = []
+            with self._open_jsonl(filename) as writer:
+                for split_name in splits:
+                    split_results = self._predict_split(split_name, writer=writer)
+                    all_results.extend(split_results)
 
         stats = self._compute_stats(all_results)
         o = stats["overall"]

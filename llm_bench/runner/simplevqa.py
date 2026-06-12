@@ -17,7 +17,7 @@ from typing import Any
 from loguru import logger
 
 from llm_bench.client import LLMClient
-from llm_bench.runners import BaseRunner
+from llm_bench.runners import BaseRunner, _JsonlWriter
 
 
 class SimpleVQARunner(BaseRunner):
@@ -40,6 +40,8 @@ class SimpleVQARunner(BaseRunner):
         temperature: float = 0.0,
         image_width: int | None = None,
         image_height: int | None = None,
+        *,
+        force: bool = False,
     ) -> None:
         """Prepare the runner.
 
@@ -52,8 +54,9 @@ class SimpleVQARunner(BaseRunner):
             temperature: If set, override the default sampling temperature.
             image_width: If set, resize images to this width.
             image_height: If set, resize images to this height.
+            force: If ``True``, re-run even when cached JSONL exists.
         """
-        super().__init__(client, output_dir, "simplevqa", limit)
+        super().__init__(client, output_dir, "simplevqa", limit, force=force)
         self._max_tokens = max_tokens
         self._temperature = temperature
         self._image_size = (
@@ -136,8 +139,11 @@ class SimpleVQARunner(BaseRunner):
         """
         return self._normalize_text(pred) == self._normalize_text(answer)
 
-    def _predict(self) -> list[dict[str, Any]]:
+    def _predict(self, writer: _JsonlWriter | None = None) -> list[dict[str, Any]]:
         """Run inference on SimpleVQA.
+
+        Args:
+            writer: Optional streaming JSONL writer.
 
         Returns:
             List of prediction dicts with ``data_id``, ``question``,
@@ -173,21 +179,22 @@ class SimpleVQARunner(BaseRunner):
                 valid = False
 
             answer = str(row.get("answer", "")).strip()
-            results.append(
-                {
-                    "data_id": row["data_id"],
-                    "question": row["question"],
-                    "pred": pred,
-                    "answer": answer,
-                    "correct": self._compare(pred, answer) if valid else False,
-                    "valid": valid,
-                    "image_valid": image_valid,
-                    "finish_reason": finish_reason,
-                    "response": response_text,
-                    "original_category": row.get("original_category", ""),
-                    "language": row.get("language", ""),
-                },
-            )
+            record = {
+                "data_id": row["data_id"],
+                "question": row["question"],
+                "pred": pred,
+                "answer": answer,
+                "correct": self._compare(pred, answer) if valid else False,
+                "valid": valid,
+                "image_valid": image_valid,
+                "finish_reason": finish_reason,
+                "response": response_text,
+                "original_category": row.get("original_category", ""),
+                "language": row.get("language", ""),
+            }
+            results.append(record)
+            if writer is not None:
+                writer.write(record)
         return results
 
     def _compute_stats(self, data: list[dict[str, Any]]) -> dict[str, Any]:
@@ -211,8 +218,21 @@ class SimpleVQARunner(BaseRunner):
         Returns:
             Dictionary with keys ``overall`` and ``by_category``.
         """
-        data = self._predict()
-        self._write_jsonl(data, "predictions.jsonl")
+        filename = "predictions.jsonl"
+        if not self._force:
+            existing = self._load_existing_jsonl(filename)
+            if existing is not None:
+                logger.info(
+                    "Skipping SimpleVQA — {} already exists (use --force to re-run)",
+                    filename,
+                )
+                data = existing
+            else:
+                with self._open_jsonl(filename) as writer:
+                    data = self._predict(writer=writer)
+        else:
+            with self._open_jsonl(filename) as writer:
+                data = self._predict(writer=writer)
 
         stats = self._compute_stats(data)
         o = stats["overall"]

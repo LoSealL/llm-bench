@@ -190,6 +190,12 @@ def parse_args() -> argparse.Namespace:
         default=0,
         help="Increase verbosity (-v for DEBUG, -vv for TRACE).",
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        default=False,
+        help="Re-run even when cached JSONL already exists.",
+    )
     args = parser.parse_args()
     logger.remove()
     if args.verbose >= 2:
@@ -255,6 +261,7 @@ def main() -> None:
             limit=args.limit,
             max_tokens=args.max_tokens,
             temperature=args.temperature,
+            force=args.force,
         )
         results.lveval = lveval.run(
             selected=args.lveval_datasets,
@@ -269,6 +276,7 @@ def main() -> None:
             limit=args.limit,
             max_tokens=args.max_tokens,
             temperature=args.temperature,
+            force=args.force,
         )
         results.longbench = longbench.run()
 
@@ -280,6 +288,7 @@ def main() -> None:
             limit=args.limit,
             max_tokens=args.max_tokens,
             temperature=args.temperature,
+            force=args.force,
         )
         results.matharena = matharena.run()
 
@@ -292,6 +301,7 @@ def main() -> None:
             limit=args.limit,
             max_tokens=args.max_tokens,
             temperature=args.temperature,
+            force=args.force,
         )
         results.bfcl = bfcl.run()
 
@@ -305,6 +315,7 @@ def main() -> None:
             temperature=args.temperature,
             image_width=args.image_width,
             image_height=args.image_height,
+            force=args.force,
         )
         results.simplevqa = simplevqa.run()
 
@@ -318,6 +329,7 @@ def main() -> None:
             temperature=args.temperature,
             image_width=args.image_width,
             image_height=args.image_height,
+            force=args.force,
         )
         results.comparebench = comparebench.run(
             selected_splits=args.comparebench_splits,

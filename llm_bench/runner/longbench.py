@@ -13,7 +13,7 @@ from typing import Any
 from loguru import logger
 
 from llm_bench.client import LLMClient
-from llm_bench.runners import BaseRunner
+from llm_bench.runners import BaseRunner, _JsonlWriter
 
 
 class LongBenchRunner(BaseRunner):
@@ -33,6 +33,8 @@ class LongBenchRunner(BaseRunner):
         limit: int | None = None,
         max_tokens: int = 1024,
         temperature: float = 0.0,
+        *,
+        force: bool = False,
     ) -> None:
         """Prepare the runner.
 
@@ -43,8 +45,9 @@ class LongBenchRunner(BaseRunner):
             limit: If set, evaluate only the first *N* samples.
             max_tokens: Maximum new tokens to generate.
             temperature: Sampling temperature.
+            force: If ``True``, re-run even when cached JSONL exists.
         """
-        super().__init__(client, output_dir, "longbench", limit)
+        super().__init__(client, output_dir, "longbench", limit, force=force)
         self._max_tokens = max_tokens
         self._temperature = temperature
 
@@ -107,8 +110,11 @@ class LongBenchRunner(BaseRunner):
             return False
         return pred.strip().upper() == answer.strip().upper()
 
-    def _predict(self) -> list[dict[str, Any]]:
+    def _predict(self, writer: _JsonlWriter | None = None) -> list[dict[str, Any]]:
         """Run inference on the full LongBench-v2 dataset.
+
+        Args:
+            writer: Optional streaming JSONL writer.
 
         Returns:
             List of result dictionaries with ``pred``, ``answer``,
@@ -149,18 +155,19 @@ class LongBenchRunner(BaseRunner):
                 temperature=self._temperature,
             )
             pred = self._extract_answer(response.content) if response.valid else None
-            results.append(
-                {
-                    **item,
-                    "response": response.content,
-                    "pred": pred,
-                    "judge": self._compare(pred, item["answer"])
-                    if response.valid
-                    else False,
-                    "valid": response.valid,
-                    "finish_reason": response.finish_reason,
-                },
-            )
+            record = {
+                **item,
+                "response": response.content,
+                "pred": pred,
+                "judge": self._compare(pred, item["answer"])
+                if response.valid
+                else False,
+                "valid": response.valid,
+                "finish_reason": response.finish_reason,
+            }
+            results.append(record)
+            if writer is not None:
+                writer.write(record)
         return results
 
     def _compute_stats(
@@ -226,8 +233,21 @@ class LongBenchRunner(BaseRunner):
         Returns:
             Aggregated accuracy statistics.
         """
-        data = self._predict()
-        self._write_jsonl(data, "predictions.jsonl")
+        filename = "predictions.jsonl"
+        if not self._force:
+            existing = self._load_existing_jsonl(filename)
+            if existing is not None:
+                logger.info(
+                    "Skipping LongBench-v2 — {} already exists (use --force to re-run)",
+                    filename,
+                )
+                data = existing
+            else:
+                with self._open_jsonl(filename) as writer:
+                    data = self._predict(writer=writer)
+        else:
+            with self._open_jsonl(filename) as writer:
+                data = self._predict(writer=writer)
 
         stats = self._compute_stats(data)
         logger.info("LongBench-v2 Overall: {:.1f}%", stats["overall"])

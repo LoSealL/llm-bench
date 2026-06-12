@@ -13,7 +13,7 @@ from typing import Any
 from loguru import logger
 
 from llm_bench.client import LLMClient
-from llm_bench.runners import BaseRunner
+from llm_bench.runners import BaseRunner, _JsonlWriter
 
 
 class MathArenaRunner(BaseRunner):
@@ -36,6 +36,8 @@ class MathArenaRunner(BaseRunner):
         limit: int | None = None,
         max_tokens: int = 1024,
         temperature: float = 0.0,
+        *,
+        force: bool = False,
     ) -> None:
         """Prepare the runner.
 
@@ -46,8 +48,9 @@ class MathArenaRunner(BaseRunner):
             limit: If set, evaluate only the first *N* samples.
             max_tokens: If set, override the default generation limit.
             temperature: If set, override the default sampling temperature.
+            force: If ``True``, re-run even when cached JSONL exists.
         """
-        super().__init__(client, output_dir, "matharena", limit)
+        super().__init__(client, output_dir, "matharena", limit, force=force)
         self._max_tokens = max_tokens
         self._temperature = temperature
 
@@ -90,8 +93,11 @@ class MathArenaRunner(BaseRunner):
             return False
         return pred.strip() == answer.strip()
 
-    def _predict(self) -> list[dict[str, Any]]:
+    def _predict(self, writer: _JsonlWriter | None = None) -> list[dict[str, Any]]:
         """Run inference on the AIME 2026 dataset.
+
+        Args:
+            writer: Optional streaming JSONL writer.
 
         Returns:
             List of dictionaries with ``problem_idx``, ``pred``,
@@ -114,17 +120,18 @@ class MathArenaRunner(BaseRunner):
             )
             pred = self._extract_number(response.content) if response.valid else None
             answer = str(row["answer"])
-            results.append(
-                {
-                    "problem_idx": row["problem_idx"],
-                    "pred": pred,
-                    "answer": answer,
-                    "correct": self._compare(pred, answer) if response.valid else False,
-                    "valid": response.valid,
-                    "finish_reason": response.finish_reason,
-                    "response": response.content,
-                },
-            )
+            record = {
+                "problem_idx": row["problem_idx"],
+                "pred": pred,
+                "answer": answer,
+                "correct": self._compare(pred, answer) if response.valid else False,
+                "valid": response.valid,
+                "finish_reason": response.finish_reason,
+                "response": response.content,
+            }
+            results.append(record)
+            if writer is not None:
+                writer.write(record)
         return results
 
     def run(self, **kwargs: Any) -> dict[str, Any]:
@@ -133,8 +140,21 @@ class MathArenaRunner(BaseRunner):
         Returns:
             Dictionary with keys ``accuracy``, ``correct``, ``total``.
         """
-        data = self._predict()
-        self._write_jsonl(data, "predictions.jsonl")
+        filename = "predictions.jsonl"
+        if not self._force:
+            existing = self._load_existing_jsonl(filename)
+            if existing is not None:
+                logger.info(
+                    "Skipping MathArena — {} already exists (use --force to re-run)",
+                    filename,
+                )
+                data = existing
+            else:
+                with self._open_jsonl(filename) as writer:
+                    data = self._predict(writer=writer)
+        else:
+            with self._open_jsonl(filename) as writer:
+                data = self._predict(writer=writer)
 
         logger.debug("Computing MathArena accuracy for {} predictions", len(data))
         stats = self._overall_stats(data)

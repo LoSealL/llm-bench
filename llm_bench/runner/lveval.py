@@ -17,7 +17,7 @@ from typing import Any
 from loguru import logger
 
 from llm_bench.client import LLMClient
-from llm_bench.runners import BaseRunner
+from llm_bench.runners import BaseRunner, _JsonlWriter
 
 
 class _MockModule:
@@ -53,6 +53,8 @@ class LVEvalRunner(BaseRunner):
         limit: int | None = None,
         max_tokens: int = 1024,
         temperature: float = 0.0,
+        *,
+        force: bool = False,
     ) -> None:
         """Prepare the runner.
 
@@ -65,8 +67,9 @@ class LVEvalRunner(BaseRunner):
                 dataset (useful for quick smoke tests).
             max_tokens: Maximum new tokens to generate.
             temperature: Sampling temperature.
+            force: If ``True``, re-run even when cached JSONL exists.
         """
-        super().__init__(client, output_dir, "lveval", limit)
+        super().__init__(client, output_dir, "lveval", limit, force=force)
         self._max_length = max_length
         self._max_tokens = max_tokens
         self._temperature = temperature
@@ -127,12 +130,17 @@ class LVEvalRunner(BaseRunner):
                 datasets.append(f"{name}_{length}")
         return datasets
 
-    def _predict_dataset(self, dataset_name: str) -> list[dict[str, Any]]:
+    def _predict_dataset(
+        self,
+        dataset_name: str,
+        writer: _JsonlWriter | None = None,
+    ) -> list[dict[str, Any]]:
         """Run inference on a single LVEval dataset.
 
         Args:
             dataset_name: Fully qualified dataset name with length
                 suffix.
+            writer: Optional streaming JSONL writer.
 
         Returns:
             List of prediction dictionaries compatible with the original
@@ -167,24 +175,25 @@ class LVEvalRunner(BaseRunner):
                 if response.valid
                 else ""
             )
-            preds.append(
-                {
-                    "pred": pred,
-                    "answers": json_obj["answers"],
-                    "gold_ans": (
-                        json_obj["answer_keywords"]
-                        if "answer_keywords" in json_obj
-                        else None
-                    ),
-                    "input": json_obj["input"],
-                    "all_classes": (
-                        json_obj["all_classes"] if "all_classes" in json_obj else None
-                    ),
-                    "length": json_obj["length"],
-                    "valid": response.valid,
-                    "finish_reason": response.finish_reason,
-                },
-            )
+            record = {
+                "pred": pred,
+                "answers": json_obj["answers"],
+                "gold_ans": (
+                    json_obj["answer_keywords"]
+                    if "answer_keywords" in json_obj
+                    else None
+                ),
+                "input": json_obj["input"],
+                "all_classes": (
+                    json_obj["all_classes"] if "all_classes" in json_obj else None
+                ),
+                "length": json_obj["length"],
+                "valid": response.valid,
+                "finish_reason": response.finish_reason,
+            }
+            preds.append(record)
+            if writer is not None:
+                writer.write(record)
         return preds
 
     def _score_dataset(
@@ -247,8 +256,22 @@ class LVEvalRunner(BaseRunner):
         results: dict[str, dict[str, float]] = {}
 
         for dataset_name in datasets:
-            preds = self._predict_dataset(dataset_name)
-            self._write_jsonl(preds, f"{dataset_name}.jsonl")
+            filename = f"{dataset_name}.jsonl"
+            if not self._force:
+                existing = self._load_existing_jsonl(filename)
+                if existing is not None:
+                    logger.info(
+                        "Skipping {} — {} already exists (use --force to re-run)",
+                        dataset_name,
+                        filename,
+                    )
+                    preds = existing
+                else:
+                    with self._open_jsonl(filename) as writer:
+                        preds = self._predict_dataset(dataset_name, writer=writer)
+            else:
+                with self._open_jsonl(filename) as writer:
+                    preds = self._predict_dataset(dataset_name, writer=writer)
 
             score = self._score_dataset(dataset_name, preds)
             dataset_base = re.split(r"_.{1,3}k", dataset_name)[0]

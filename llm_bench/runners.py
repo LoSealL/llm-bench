@@ -21,6 +21,45 @@ from llm_bench.client import ChatResponse, LLMClient
 T = TypeVar("T")
 
 
+class _JsonlWriter:
+    """Streaming JSONL writer with crash-safe flushing.
+
+    Opens the file once, writes one record per call, and flushes
+    after each write so partial results survive a crash.
+    """
+
+    def __init__(self, path: Path, *, truncate: bool = True) -> None:
+        """Open the file for writing.
+
+        Args:
+            path: Output file path.
+            truncate: If ``True``, overwrite existing content. If
+                ``False``, append to the file.
+        """
+        self._fh = path.open("w" if truncate else "a", encoding="utf-8")
+        self.count = 0
+
+    def write(self, record: dict[str, Any]) -> None:
+        """Write a single JSON record and flush.
+
+        Args:
+            record: Dictionary to serialise.
+        """
+        self._fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+        self._fh.flush()
+        self.count += 1
+
+    def close(self) -> None:
+        """Close the underlying file handle."""
+        self._fh.close()
+
+    def __enter__(self) -> "_JsonlWriter":
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()
+
+
 @dataclass
 class BenchmarkResults:
     """Aggregate results from all benchmark runners.
@@ -55,6 +94,8 @@ class BaseRunner(ABC):
         output_dir: str | Path,
         benchmark_name: str,
         limit: int | None = None,
+        *,
+        force: bool = False,
     ) -> None:
         """Prepare the runner.
 
@@ -64,9 +105,11 @@ class BaseRunner(ABC):
                 *benchmark_name* is created automatically.
             benchmark_name: Directory name for this benchmark's outputs.
             limit: If set, cap the number of evaluated samples.
+            force: If ``True``, re-run even when cached JSONL exists.
         """
         self._client = client
         self._limit = limit
+        self._force = force
         self._output_dir = Path(output_dir) / benchmark_name
         self._output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -103,6 +146,58 @@ class BaseRunner(ABC):
                 fh.write(json.dumps(record, ensure_ascii=False) + "\n")
         logger.info("Saved {} records to {}", len(records), path)
         return path
+
+    def _open_jsonl(
+        self,
+        filename: str,
+        *,
+        truncate: bool = True,
+    ) -> _JsonlWriter:
+        """Open a JSONL file for streaming writes.
+
+        Args:
+            filename: Output file name (e.g. ``"predictions.jsonl"``).
+            truncate: If ``True``, overwrite existing content. If
+                ``False``, append to the file.
+
+        Returns:
+            A :class:`_JsonlWriter` context manager.
+        """
+        return _JsonlWriter(self._output_dir / filename, truncate=truncate)
+
+    def _load_existing_jsonl(
+        self,
+        filename: str,
+    ) -> list[dict[str, Any]] | None:
+        """Load an existing JSONL file if it is valid.
+
+        Returns ``None`` when the file does not exist, is empty, or
+        contains malformed JSON (e.g. from a crashed run).
+
+        Args:
+            filename: Output file name.
+
+        Returns:
+            List of records, or ``None``.
+        """
+        path = self._output_dir / filename
+        if not path.exists():
+            return None
+        records: list[dict[str, Any]] = []
+        try:
+            with path.open("r", encoding="utf-8") as fh:
+                for lineno, line in enumerate(fh, 1):
+                    line = line.strip()
+                    if not line:
+                        continue
+                    records.append(json.loads(line))
+        except (json.JSONDecodeError, OSError) as exc:
+            logger.warning("Failed to load {} — {} — will re-run", path, exc)
+            return None
+        if not records:
+            return None
+        logger.info("Loaded {} existing records from {}", len(records), path)
+        return records
 
     @staticmethod
     def _accuracy(

@@ -108,8 +108,7 @@ class CompareBenchRunner(BaseRunner):
         if not response:
             return ""
 
-        text = re.sub(r"<think>.*?</think>", "", response, flags=re.DOTALL)
-        text = re.sub(r"```.*?```", "", text, flags=re.DOTALL)
+        text = BaseRunner._strip_thinking(response)
 
         answer = BaseRunner._extract_letter_answer(
             text,
@@ -129,6 +128,18 @@ class CompareBenchRunner(BaseRunner):
             return cleaned.upper()
 
         return text.strip()
+
+    def _compare(self, pred: str, answer: str) -> bool:
+        """Case-insensitive letter comparison.
+
+        Args:
+            pred: Predicted answer.
+            answer: Ground-truth answer.
+
+        Returns:
+            ``True`` if letters match after uppercasing.
+        """
+        return pred.strip().upper() == answer.strip().upper()
 
     def _predict_split(self, split_name: str) -> list[dict[str, Any]]:
         """Run inference on a single CompareBench split.
@@ -190,7 +201,7 @@ class CompareBenchRunner(BaseRunner):
                     "question": row["vlm_question"],
                     "pred": pred,
                     "answer": answer,
-                    "correct": (pred == answer) if valid else False,
+                    "correct": self._compare(pred, answer) if valid else False,
                     "valid": valid,
                     "image_valid": image_valid,
                     "finish_reason": finish_reason,

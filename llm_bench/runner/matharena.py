@@ -72,8 +72,23 @@ class MathArenaRunner(BaseRunner):
         Returns:
             The last matched integer string, or ``None``.
         """
-        numbers = re.findall(r"\b\d+\b", response)
+        text = BaseRunner._strip_thinking(response)
+        numbers = re.findall(r"\b\d+\b", text)
         return numbers[-1] if numbers else None
+
+    def _compare(self, pred: str | None, answer: str) -> bool:
+        """Numeric string comparison.
+
+        Args:
+            pred: Predicted number string or ``None``.
+            answer: Ground-truth number string.
+
+        Returns:
+            ``True`` if both match after stripping.
+        """
+        if pred is None:
+            return False
+        return pred.strip() == answer.strip()
 
     def _predict(self) -> list[dict[str, Any]]:
         """Run inference on the AIME 2026 dataset.
@@ -104,7 +119,7 @@ class MathArenaRunner(BaseRunner):
                     "problem_idx": row["problem_idx"],
                     "pred": pred,
                     "answer": answer,
-                    "correct": (pred == answer) if response.valid else False,
+                    "correct": self._compare(pred, answer) if response.valid else False,
                     "valid": response.valid,
                     "finish_reason": response.finish_reason,
                     "response": response.content,

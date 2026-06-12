@@ -83,14 +83,29 @@ class LongBenchRunner(BaseRunner):
         Returns:
             Uppercase letter ``A``-``D``, or ``None``.
         """
+        text = BaseRunner._strip_thinking(response)
         return BaseRunner._extract_letter_answer(
-            response,
+            text,
             patterns=[
                 r"The correct answer is \(([A-D])\)",
                 r"The correct answer is ([A-D])",
                 r"(?:答案是|Answer:|answer:)\s*\(?([A-D])\)?",
             ],
         )
+
+    def _compare(self, pred: str | None, answer: str) -> bool:
+        """Case-insensitive letter comparison.
+
+        Args:
+            pred: Predicted letter or ``None``.
+            answer: Ground-truth letter.
+
+        Returns:
+            ``True`` if letters match after uppercasing.
+        """
+        if pred is None:
+            return False
+        return pred.strip().upper() == answer.strip().upper()
 
     def _predict(self) -> list[dict[str, Any]]:
         """Run inference on the full LongBench-v2 dataset.
@@ -139,7 +154,9 @@ class LongBenchRunner(BaseRunner):
                     **item,
                     "response": response.content,
                     "pred": pred,
-                    "judge": (pred == item["answer"]) if response.valid else False,
+                    "judge": self._compare(pred, item["answer"])
+                    if response.valid
+                    else False,
                     "valid": response.valid,
                     "finish_reason": response.finish_reason,
                 },

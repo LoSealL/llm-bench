@@ -274,6 +274,60 @@ class BaseRunner(ABC):
                 return letters[-1].upper()
         return None
 
+    _THINKING_TAGS: tuple[str, ...] = (
+        "think",
+        "reasoning",
+        "analysis",
+        "thought",
+        "inner_monologue",
+    )
+
+    @staticmethod
+    def _strip_thinking(response: str) -> str:
+        """Remove chain-of-thought and code-fence blocks from output.
+
+        Handles XML-style thinking tags commonly used by open-weight
+        models (e.g. ``<think>``, ``<reasoning>``, ``<analysis>``).
+        Also strips fenced code blocks.
+
+        Three cases are handled for each tag:
+
+        1. Paixed: ``<tag>...</tag>`` — both removed.
+        2. Missing close: ``<tag>...`` — tag and everything after removed.
+        3. Missing open: ``...</tag>`` — everything before the closing
+           tag is also removed (the closing tag itself is removed by
+           the paired pattern in a subsequent pass or by this rule).
+
+        Args:
+            response: Raw model response.
+
+        Returns:
+            Response with thinking blocks removed.
+        """
+        text = response
+        for tag in BaseRunner._THINKING_TAGS:
+            text = re.sub(rf"<{tag}>.*?</{tag}>", "", text, flags=re.DOTALL)
+            text = re.sub(rf"<{tag}>.*$", "", text, flags=re.DOTALL)
+            text = re.sub(rf"^.*?</{tag}>", "", text, flags=re.DOTALL)
+        text = re.sub(r"```.*?```", "", text, flags=re.DOTALL)
+        return text.strip()
+
+    def _compare(self, pred: str, answer: str) -> bool:
+        """Default exact-match comparison.
+
+        Subclasses may override this to add custom normalization
+        (e.g. case-folding, punctuation removal).
+
+        Args:
+            pred: Predicted answer string.
+            answer: Ground-truth answer string.
+
+        Returns:
+            ``True`` if *pred* matches *answer* after default
+            normalization.
+        """
+        return pred.strip() == answer.strip()
+
     def _prepare_image_data_uri(
         self,
         image: str | Image.Image,

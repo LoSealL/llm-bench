@@ -88,8 +88,7 @@ class SimpleVQARunner(BaseRunner):
         if not response:
             return ""
 
-        text = re.sub(r"<think>.*?</think>", "", response, flags=re.DOTALL)
-        text = re.sub(r"```.*?```", "", text, flags=re.DOTALL)
+        text = BaseRunner._strip_thinking(response)
         text = re.sub(r"[*_`#]", "", text)
         text = re.sub(
             r"^(答案[：:]?\s*|Answer[：:]?\s*)+",
@@ -125,7 +124,7 @@ class SimpleVQARunner(BaseRunner):
         )
         return text.strip()
 
-    def _exact_match(self, pred: str, answer: str) -> bool:
+    def _compare(self, pred: str, answer: str) -> bool:
         """Check normalized exact match.
 
         Args:
@@ -180,7 +179,7 @@ class SimpleVQARunner(BaseRunner):
                     "question": row["question"],
                     "pred": pred,
                     "answer": answer,
-                    "correct": self._exact_match(pred, answer) if valid else False,
+                    "correct": self._compare(pred, answer) if valid else False,
                     "valid": valid,
                     "image_valid": image_valid,
                     "finish_reason": finish_reason,

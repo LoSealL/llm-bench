@@ -12,6 +12,7 @@ dependencies = [
     "pandas>=3.0.3",
     "pillow>=12.2.0",
     "python-dotenv>=1.2.2",
+    "requests>=2.34.2",
     "rouge>=1.0.1",
     "tiktoken>=0.13.0",
 ]

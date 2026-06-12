@@ -154,13 +154,25 @@ class SimpleVQARunner(BaseRunner):
         results: list[dict[str, Any]] = []
         for item in self._progress(data_all, desc="SimpleVQA"):
             row = dict(item)
-            messages = self._build_messages(row["image"], row["question"])
-            response = self._chat(
-                messages=messages,
-                max_tokens=self._max_tokens,
-                temperature=self._temperature,
-            )
-            pred = self._extract_answer(response)
+            image_valid = self._validate_image(row["image"])
+            if image_valid:
+                messages = self._build_messages(row["image"], row["question"])
+                response = self._chat(
+                    messages=messages,
+                    max_tokens=self._max_tokens,
+                    temperature=self._temperature,
+                )
+                pred = self._extract_answer(response.content) if response.valid else ""
+                finish_reason = response.finish_reason
+                response_text = response.content
+                valid = response.valid
+            else:
+                logger.warning("Skipping invalid image for data_id {}", row["data_id"])
+                pred = ""
+                finish_reason = None
+                response_text = ""
+                valid = False
+
             answer = str(row.get("answer", "")).strip()
             results.append(
                 {
@@ -168,8 +180,11 @@ class SimpleVQARunner(BaseRunner):
                     "question": row["question"],
                     "pred": pred,
                     "answer": answer,
-                    "correct": self._exact_match(pred, answer),
-                    "response": response,
+                    "correct": self._exact_match(pred, answer) if valid else False,
+                    "valid": valid,
+                    "image_valid": image_valid,
+                    "finish_reason": finish_reason,
+                    "response": response_text,
                     "original_category": row.get("original_category", ""),
                     "language": row.get("language", ""),
                 },

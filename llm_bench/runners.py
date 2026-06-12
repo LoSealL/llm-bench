@@ -16,7 +16,7 @@ from loguru import logger
 from PIL import Image  # type: ignore[import-untyped]
 from tqdm import tqdm
 
-from llm_bench.client import LLMClient
+from llm_bench.client import ChatResponse, LLMClient
 
 T = TypeVar("T")
 
@@ -149,11 +149,11 @@ class BaseRunner(ABC):
         messages: Any | None = None,
         max_tokens: int = 1024,
         temperature: float = 0.0,
-    ) -> str:
+    ) -> ChatResponse:
         """Send a chat request through the wrapped client.
 
-        Logs a warning when the model returns an empty response so each
-        runner does not need to repeat the check.
+        Logs a warning when the model returns an invalid or empty
+        response so each runner does not need to repeat the check.
 
         Args:
             prompt: Raw user message content. Used when ``messages`` is
@@ -164,17 +164,48 @@ class BaseRunner(ABC):
             temperature: Sampling temperature.
 
         Returns:
-            The assistant's textual response, or an empty string.
+            A :class:`ChatResponse` with content, finish reason, and
+            validity flag.
         """
-        response = self._client.chat(
+        response = self._client.chat_with_meta(
             prompt,
             messages=messages,
             max_tokens=max_tokens,
             temperature=temperature,
         )
         if not response:
-            logger.warning("Empty response from model")
+            logger.warning(
+                "Invalid response from model (finish_reason={})",
+                response.finish_reason,
+            )
         return response
+
+    def _validate_image(self, image: str | Image.Image) -> bool:
+        """Check whether an image can be decoded successfully.
+
+        Args:
+            image: Base64-encoded string (with or without a data URI
+                prefix) or a ``PIL.Image.Image`` instance.
+
+        Returns:
+            ``True`` if the image is decodable, otherwise ``False``.
+        """
+        try:
+            if isinstance(image, str):
+                if image.startswith("data:"):
+                    b64_part = image.split(",", 1)[1]
+                    raw = base64.b64decode(b64_part)
+                else:
+                    raw = base64.b64decode(image)
+                Image.open(io.BytesIO(raw)).verify()
+                return True
+            if isinstance(image, Image.Image):
+                image.verify()
+                return True
+            return False
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Invalid image: {}", exc)
+            return False
 
     def _load_hf_dataset(
         self,
@@ -313,20 +344,24 @@ class BaseRunner(ABC):
         self,
         data: list[dict[str, Any]],
         correct_key: str = "correct",
+        valid_key: str = "valid",
         decimals: int = 2,
     ) -> dict[str, Any]:
-        """Compute overall accuracy statistics.
+        """Compute overall accuracy statistics over valid records.
 
         Args:
             data: Prediction records.
             correct_key: Key holding the boolean correctness value.
+            valid_key: Key holding the boolean validity value. Only valid
+                records are counted in the denominator.
             decimals: Rounding precision for the accuracy percentage.
 
         Returns:
             Dictionary with ``accuracy``, ``correct``, and ``total``.
         """
-        correct = sum(1 for item in data if item.get(correct_key))
-        total = len(data)
+        valid_items = [item for item in data if item.get(valid_key, True)]
+        correct = sum(1 for item in valid_items if item.get(correct_key))
+        total = len(valid_items)
         return {
             "accuracy": self._accuracy(correct, total, decimals=decimals),
             "correct": correct,
@@ -338,23 +373,29 @@ class BaseRunner(ABC):
         data: list[dict[str, Any]],
         group_fn: Callable[[dict[str, Any]], str],
         correct_key: str = "correct",
+        valid_key: str = "valid",
         group_label: str = "group",
         decimals: int = 2,
     ) -> dict[str, Any]:
-        """Compute overall and per-group accuracy statistics.
+        """Compute overall and per-group accuracy over valid records.
 
         Args:
             data: Prediction records.
             group_fn: Callable that returns a group name for each record.
             correct_key: Key holding the boolean correctness value.
+            valid_key: Key holding the boolean validity value. Only valid
+                records are counted.
             group_label: Label used for the grouped result key.
 
         Returns:
             Dictionary with ``overall`` and ``by_<group_label>`` keys.
         """
-        overall = self._overall_stats(data, correct_key)
+        valid_items = [item for item in data if item.get(valid_key, True)]
+        overall = self._overall_stats(
+            valid_items, correct_key, valid_key, decimals=decimals
+        )
         by_group: dict[str, dict[str, int]] = {}
-        for item in data:
+        for item in valid_items:
             group = group_fn(item)
             if group not in by_group:
                 by_group[group] = {"correct": 0, "total": 0}

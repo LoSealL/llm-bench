@@ -7,6 +7,7 @@ automatic retry logic and token-based prompt truncation.
 """
 
 import time
+from dataclasses import dataclass
 from typing import Any
 
 import tiktoken
@@ -14,6 +15,26 @@ from loguru import logger
 from openai import OpenAI
 
 from llm_bench.config import BenchConfig
+
+
+@dataclass(frozen=True)
+class ChatResponse:
+    """Structured response from a chat completion request.
+
+    Attributes:
+        content: The assistant's textual response.
+        finish_reason: The completion finish reason, if provided.
+        valid: ``True`` when *finish_reason* is ``stop``,
+            ``tool_calls``, or ``function_call``.
+    """
+
+    content: str
+    finish_reason: str | None
+    valid: bool
+
+    def __bool__(self) -> bool:
+        """Return whether the response is valid and non-empty."""
+        return self.valid and bool(self.content)
 
 
 class LLMClient:
@@ -24,6 +45,8 @@ class LLMClient:
         _model: Model name sent in the ``model`` field of every request.
         _tokenizer: ``tiktoken`` encoder used for prompt truncation.
     """
+
+    VALID_FINISH_REASONS = {"stop", "tool_calls", "function_call"}
 
     def __init__(self, config: BenchConfig) -> None:
         """Initialize the client from a :class:`BenchConfig`.
@@ -63,6 +86,38 @@ class LLMClient:
         Returns:
             The assistant's textual response, or an empty string if all
             retries are exhausted.
+        """
+        return self.chat_with_meta(
+            prompt,
+            messages=messages,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            max_retries=max_retries,
+        ).content
+
+    def chat_with_meta(
+        self,
+        prompt: str | None = None,
+        *,
+        messages: Any | None = None,
+        max_tokens: int = 128,
+        temperature: float = 0.1,
+        max_retries: int = 5,
+    ) -> ChatResponse:
+        """Send a chat request and return content plus finish metadata.
+
+        Args:
+            prompt: Raw user message content. Used when ``messages`` is
+                not provided.
+            messages: Full message list to send directly. Takes precedence
+                over ``prompt``.
+            max_tokens: Maximum number of *new* tokens to generate.
+            temperature: Sampling temperature.
+            max_retries: Number of retry attempts on transient failures.
+
+        Returns:
+            A :class:`ChatResponse` with the assistant's text, finish
+            reason, and validity flag.
         """
         if messages is not None:
             text_parts: list[str] = []
@@ -122,22 +177,42 @@ class LLMClient:
                 content = msg.content
                 if content:
                     logger.debug("Received response ({} chars)", len(content))
-                    return content
+                    return ChatResponse(
+                        content=content,
+                        finish_reason=finish_reason,
+                        valid=finish_reason in self.VALID_FINISH_REASONS,
+                    )
                 reasoning = getattr(msg, "reasoning_content", None)
                 if reasoning:
                     logger.debug("Received reasoning_content instead of content")
-                    return reasoning
+                    return ChatResponse(
+                        content=reasoning,
+                        finish_reason=finish_reason,
+                        valid=finish_reason in self.VALID_FINISH_REASONS,
+                    )
                 logger.warning("Empty response from model")
-                return ""
+                return ChatResponse(
+                    content="",
+                    finish_reason=finish_reason,
+                    valid=False,
+                )
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
                     "API call failed (attempt {}/{}): {}", attempt, max_retries, exc
                 )
                 if attempt == max_retries:
                     logger.error("Max retries reached, giving up: {}", exc)
-                    return ""
+                    return ChatResponse(
+                        content="",
+                        finish_reason=None,
+                        valid=False,
+                    )
                 time.sleep(1)
-        return ""
+        return ChatResponse(
+            content="",
+            finish_reason=None,
+            valid=False,
+        )
 
     def truncate_prompt(self, prompt: str, max_length: int) -> str:
         """Truncate a prompt to ``max_length`` tokens using middle-drop.

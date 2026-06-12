@@ -179,17 +179,23 @@ class BFCLRunner(BaseRunner):
         results: list[dict[str, Any]] = []
         for entry in self._progress(dataset, desc=f"BFCL-{category}"):
             messages = self._build_messages(entry)
-            raw_response = self._chat(
+            response = self._chat(
                 messages=messages,
                 max_tokens=self._max_tokens,
                 temperature=self._temperature,
             )
-            if not raw_response:
-                logger.warning("Empty response for entry {}", entry["id"])
+            if not response:
+                logger.warning(
+                    "Invalid response for entry {} (finish_reason={})",
+                    entry["id"],
+                    response.finish_reason,
+                )
             results.append(
                 {
                     "id": entry["id"],
-                    "result": raw_response,
+                    "result": response.content,
+                    "valid": response.valid,
+                    "finish_reason": response.finish_reason,
                 }
             )
         logger.info(
@@ -202,6 +208,8 @@ class BFCLRunner(BaseRunner):
     ) -> dict[str, Any]:
         """Score predictions for a single category.
 
+        Only valid predictions are counted toward the accuracy.
+
         Args:
             category: BFCL category name.
             predictions: Prediction dicts from :meth:`_predict_category`.
@@ -212,7 +220,8 @@ class BFCLRunner(BaseRunner):
         """
         handler = MockHandler()
         model_name = self._client._model
-        return evaluate_task(category, predictions, model_name, handler)
+        valid_predictions = [p for p in predictions if p.get("valid", True)]
+        return evaluate_task(category, valid_predictions, model_name, handler)
 
     def run(self, **kwargs: Any) -> dict[str, dict[str, Any]]:
         """Run the BFCL v4 benchmark.

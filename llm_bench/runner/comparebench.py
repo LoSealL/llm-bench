@@ -159,13 +159,28 @@ class CompareBenchRunner(BaseRunner):
                 image = raw_image
             assert isinstance(image, Image.Image)
 
-            messages = self._build_messages(image, row["vlm_question"])
-            response = self._chat(
-                messages=messages,
-                max_tokens=self._max_tokens,
-                temperature=self._temperature,
-            )
-            pred = self._extract_answer(response)
+            image_valid = self._validate_image(image)
+            if image_valid:
+                messages = self._build_messages(image, row["vlm_question"])
+                response = self._chat(
+                    messages=messages,
+                    max_tokens=self._max_tokens,
+                    temperature=self._temperature,
+                )
+                pred = self._extract_answer(response.content) if response.valid else ""
+                finish_reason = response.finish_reason
+                response_text = response.content
+                valid = response.valid
+            else:
+                logger.warning(
+                    "Skipping invalid image for data_id {}",
+                    f"{split_name}_{idx}",
+                )
+                pred = ""
+                finish_reason = None
+                response_text = ""
+                valid = False
+
             answer = str(row.get("gt_answer", "")).strip().upper()
             results.append(
                 {
@@ -175,8 +190,11 @@ class CompareBenchRunner(BaseRunner):
                     "question": row["vlm_question"],
                     "pred": pred,
                     "answer": answer,
-                    "correct": pred == answer,
-                    "response": response,
+                    "correct": (pred == answer) if valid else False,
+                    "valid": valid,
+                    "image_valid": image_valid,
+                    "finish_reason": finish_reason,
+                    "response": response_text,
                 },
             )
         return results

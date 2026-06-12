@@ -97,15 +97,17 @@ class MathArenaRunner(BaseRunner):
                 max_tokens=self._max_tokens,
                 temperature=self._temperature,
             )
-            pred = self._extract_number(response)
+            pred = self._extract_number(response.content) if response.valid else None
             answer = str(row["answer"])
             results.append(
                 {
                     "problem_idx": row["problem_idx"],
                     "pred": pred,
                     "answer": answer,
-                    "correct": pred == answer,
-                    "response": response,
+                    "correct": (pred == answer) if response.valid else False,
+                    "valid": response.valid,
+                    "finish_reason": response.finish_reason,
+                    "response": response.content,
                 },
             )
         return results

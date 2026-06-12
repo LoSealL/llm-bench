@@ -133,13 +133,15 @@ class LongBenchRunner(BaseRunner):
                 max_tokens=self._max_tokens,
                 temperature=self._temperature,
             )
-            pred = self._extract_answer(response)
+            pred = self._extract_answer(response.content) if response.valid else None
             results.append(
                 {
                     **item,
-                    "response": response,
+                    "response": response.content,
                     "pred": pred,
-                    "judge": pred == item["answer"],
+                    "judge": (pred == item["answer"]) if response.valid else False,
+                    "valid": response.valid,
+                    "finish_reason": response.finish_reason,
                 },
             )
         return results
@@ -158,7 +160,8 @@ class LongBenchRunner(BaseRunner):
             ``short``, ``medium``, ``long``.
         """
         logger.debug("Computing LongBench-v2 statistics for {} predictions", len(data))
-        overall = self._overall_stats(data, correct_key="judge", decimals=1)
+        valid_data = [item for item in data if item["valid"]]
+        overall = self._overall_stats(valid_data, correct_key="judge", decimals=1)
 
         counters: dict[str, dict[str, float]] = {
             "easy": {"correct": 0.0, "total": 0.0},
@@ -168,7 +171,7 @@ class LongBenchRunner(BaseRunner):
             "long": {"correct": 0.0, "total": 0.0},
         }
 
-        for item in data:
+        for item in valid_data:
             acc = 1.0 if item["judge"] and item["pred"] is not None else 0.0
 
             diff = item["difficulty"]

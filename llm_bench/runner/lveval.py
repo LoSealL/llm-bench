@@ -157,12 +157,16 @@ class LVEvalRunner(BaseRunner):
                 prompt,
                 self._max_length,
             )
-            raw_pred = self._chat(
+            response = self._chat(
                 prompt,
                 max_tokens=self._max_tokens,
                 temperature=self._temperature,
             )
-            pred = self._utils.post_process(raw_pred, self._client._model)
+            pred = (
+                self._utils.post_process(response.content, self._client._model)
+                if response.valid
+                else ""
+            )
             preds.append(
                 {
                     "pred": pred,
@@ -177,6 +181,8 @@ class LVEvalRunner(BaseRunner):
                         json_obj["all_classes"] if "all_classes" in json_obj else None
                     ),
                     "length": json_obj["length"],
+                    "valid": response.valid,
+                    "finish_reason": response.finish_reason,
                 },
             )
         return preds
@@ -187,6 +193,8 @@ class LVEvalRunner(BaseRunner):
         preds: list[dict[str, Any]],
     ) -> float:
         """Score predictions using the original LVEval metric.
+
+        Only valid predictions are counted toward the score.
 
         Args:
             dataset_name: Fully qualified dataset name.
@@ -204,6 +212,8 @@ class LVEvalRunner(BaseRunner):
         total_score = 0.0
         total_sample = 0
         for item in preds:
+            if not item.get("valid", True):
+                continue
             total_sample += 1
             score = 0.0
             for ground_truth in item["answers"]:

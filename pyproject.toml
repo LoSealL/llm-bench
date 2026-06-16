@@ -1,6 +1,10 @@
+[build-system]
+requires = ["setuptools>=65.5.0", "wheel>=0.40"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "llm-bench"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12.13"
@@ -18,30 +22,25 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = [
-    "pylint",
-    "pyright>=1.1.410",
-    "pytest>=9.0",
-    "ruff>=0.15.15",
-]
+dev = ["pylint", "pyright>=1.1.410", "pytest>=9.0", "ruff>=0.15.15"]
 
 [tool.pylint.messages_control]
 disable = [
-    "C0114",  # missing-module-docstring
-    "C0115",  # missing-class-docstring
-    "C0116",  # missing-function-docstring
-    "R0902",  # too-many-instance-attributes
-    "R0903",  # too-few-public-methods
-    "R0911",  # too-many-return-statements
-    "R0912",  # too-many-branches
-    "R0913",  # too-many-arguments
-    "R0914",  # too-many-locals
-    "R0915",  # too-many-statements
-    "R0917",  # too-many-positional-arguments
-    "W0212",  # protected-access
-    "W0718",  # broad-exception-caught
-    "E0401",  # import-error (datasets may not be installed in CI)
-    "E0601",  # used-before-assignment (TYPE_CHECKING false positives)
+    "C0114", # missing-module-docstring
+    "C0115", # missing-class-docstring
+    "C0116", # missing-function-docstring
+    "R0902", # too-many-instance-attributes
+    "R0903", # too-few-public-methods
+    "R0911", # too-many-return-statements
+    "R0912", # too-many-branches
+    "R0913", # too-many-arguments
+    "R0914", # too-many-locals
+    "R0915", # too-many-statements
+    "R0917", # too-many-positional-arguments
+    "W0212", # protected-access
+    "W0718", # broad-exception-caught
+    "E0401", # import-error (datasets may not be installed in CI)
+    "E0601", # used-before-assignment (TYPE_CHECKING false positives)
 ]
 
 [tool.pylint.format]
@@ -49,6 +48,9 @@ max-line-length = 88
 
 [tool.setuptools.packages.find]
 include = ["llm_bench*"]
+
+[tool.setuptools.dynamic]
+version = {attr = "llm_bench.__version__"}
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

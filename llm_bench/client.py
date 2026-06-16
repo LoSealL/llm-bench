@@ -166,6 +166,8 @@ class LLMClient:
             "tools_count": len(tools) if tools else 0,
         }
         logger.trace("[REQUEST PAYLOAD] {}", payload)
+        if tools:
+            logger.trace("[TOOLS] {}", tools)
 
         for attempt in range(1, max_retries + 1):
             try:

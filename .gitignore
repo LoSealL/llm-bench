@@ -29,6 +29,7 @@ Thumbs.db
 .claude/
 .opencode/
 .specify/
+superpowers/
 
 # Package manager
 uv.lock

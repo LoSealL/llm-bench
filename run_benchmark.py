@@ -408,88 +408,93 @@ def main() -> None:
         for bench in benchmarks_to_run:
             db.clear_model_benchmark(config.model, bench)
 
-    if args.lveval:
-        logger.info("Running LVEval")
-        lveval = LVEvalRunner(
-            client,
-            args.output_dir,
-            max_length=args.max_length,
-            limit=args.limit,
-            max_tokens=args.max_tokens,
-            temperature=args.temperature,
-            force=args.force,
-        )
-        results.lveval = lveval.run(
-            selected=args.lveval_datasets,
-            lengths=args.lveval_lengths,
-        )
+    interrupted = False
+    try:
+        if args.lveval:
+            logger.info("Running LVEval")
+            lveval = LVEvalRunner(
+                client,
+                args.output_dir,
+                max_length=args.max_length,
+                limit=args.limit,
+                max_tokens=args.max_tokens,
+                temperature=args.temperature,
+                force=args.force,
+            )
+            results.lveval = lveval.run(
+                selected=args.lveval_datasets,
+                lengths=args.lveval_lengths,
+            )
 
-    if args.longbench:
-        logger.info("Running LongBench-v2")
-        longbench = LongBenchRunner(
-            client,
-            args.output_dir,
-            limit=args.limit,
-            max_tokens=args.max_tokens,
-            temperature=args.temperature,
-            force=args.force,
-        )
-        results.longbench = longbench.run()
+        if args.longbench:
+            logger.info("Running LongBench-v2")
+            longbench = LongBenchRunner(
+                client,
+                args.output_dir,
+                limit=args.limit,
+                max_tokens=args.max_tokens,
+                temperature=args.temperature,
+                force=args.force,
+            )
+            results.longbench = longbench.run()
 
-    if args.matharena:
-        logger.info("Running MathArena")
-        matharena = MathArenaRunner(
-            client,
-            args.output_dir,
-            limit=args.limit,
-            max_tokens=args.max_tokens,
-            temperature=args.temperature,
-            force=args.force,
-        )
-        results.matharena = matharena.run()
+        if args.matharena:
+            logger.info("Running MathArena")
+            matharena = MathArenaRunner(
+                client,
+                args.output_dir,
+                limit=args.limit,
+                max_tokens=args.max_tokens,
+                temperature=args.temperature,
+                force=args.force,
+            )
+            results.matharena = matharena.run()
 
-    if args.bfcl:
-        logger.info("Running BFCL v4")
-        bfcl = BFCLRunner(
-            client,
-            args.output_dir,
-            categories=args.bfcl_categories,
-            limit=args.limit,
-            max_tokens=args.max_tokens,
-            temperature=args.temperature,
-            force=args.force,
-        )
-        results.bfcl = bfcl.run()
+        if args.bfcl:
+            logger.info("Running BFCL v4")
+            bfcl = BFCLRunner(
+                client,
+                args.output_dir,
+                categories=args.bfcl_categories,
+                limit=args.limit,
+                max_tokens=args.max_tokens,
+                temperature=args.temperature,
+                force=args.force,
+            )
+            results.bfcl = bfcl.run()
 
-    if args.simplevqa:
-        logger.info("Running SimpleVQA")
-        simplevqa = SimpleVQARunner(
-            client,
-            args.output_dir,
-            limit=args.limit,
-            max_tokens=args.max_tokens,
-            temperature=args.temperature,
-            image_width=args.image_width,
-            image_height=args.image_height,
-            force=args.force,
-        )
-        results.simplevqa = simplevqa.run()
+        if args.simplevqa:
+            logger.info("Running SimpleVQA")
+            simplevqa = SimpleVQARunner(
+                client,
+                args.output_dir,
+                limit=args.limit,
+                max_tokens=args.max_tokens,
+                temperature=args.temperature,
+                image_width=args.image_width,
+                image_height=args.image_height,
+                force=args.force,
+            )
+            results.simplevqa = simplevqa.run()
 
-    if args.comparebench:
-        logger.info("Running CompareBench")
-        comparebench = CompareBenchRunner(
-            client,
-            args.output_dir,
-            limit=args.limit,
-            max_tokens=args.max_tokens,
-            temperature=args.temperature,
-            image_width=args.image_width,
-            image_height=args.image_height,
-            force=args.force,
-        )
-        results.comparebench = comparebench.run(
-            selected_splits=args.comparebench_splits,
-        )
+        if args.comparebench:
+            logger.info("Running CompareBench")
+            comparebench = CompareBenchRunner(
+                client,
+                args.output_dir,
+                limit=args.limit,
+                max_tokens=args.max_tokens,
+                temperature=args.temperature,
+                image_width=args.image_width,
+                image_height=args.image_height,
+                force=args.force,
+            )
+            results.comparebench = comparebench.run(
+                selected_splits=args.comparebench_splits,
+            )
+    except KeyboardInterrupt:
+        interrupted = True
+        logger.warning("Interrupted — saving completed results")
 
     # Save aggregated results to SQLite
     logger.info("Saving results to database")
@@ -501,7 +506,10 @@ def main() -> None:
     logger.info("Generating reports")
     generate_html_report(db, out_dir)
     db.close()
-    logger.info("Done.")
+    if interrupted:
+        logger.warning("Partial results saved — re-run to complete")
+    else:
+        logger.info("Done.")
 
 
 if __name__ == "__main__":

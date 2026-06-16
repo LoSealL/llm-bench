@@ -227,6 +227,7 @@ def _save_samples_to_db(
         args: Parsed CLI arguments (to know which benchmarks ran).
     """
     out_dir = Path(args.output_dir)
+    model_dir = out_dir / model.replace("/", "_")
 
     def _get_run_id(benchmark: str) -> int | None:
         """Return latest run_id for model+benchmark, or None."""
@@ -256,7 +257,7 @@ def _save_samples_to_db(
         filename: str,
         id_key: str = "sample_id",
     ) -> None:
-        jsonl_path = out_dir / benchmark / filename
+        jsonl_path = model_dir / benchmark / filename
         if not jsonl_path.exists():
             return
         records = _load_jsonl(jsonl_path)
@@ -273,7 +274,7 @@ def _save_samples_to_db(
 
     # LVEval: multiple JSONL files per dataset
     if args.lveval:
-        lveval_dir = out_dir / "lveval"
+        lveval_dir = model_dir / "lveval"
         if lveval_dir.exists():
             run_id = _get_run_id("lveval")
             if run_id is not None:
@@ -302,7 +303,7 @@ def _save_samples_to_db(
 
     # BFCL: per-category JSONL files
     if args.bfcl:
-        bfcl_dir = out_dir / "bfcl"
+        bfcl_dir = model_dir / "bfcl"
         if bfcl_dir.exists():
             run_id = _get_run_id("bfcl")
             if run_id is not None:

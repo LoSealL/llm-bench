@@ -110,7 +110,8 @@ class BaseRunner(ABC):
         self._client = client
         self._limit = limit
         self._force = force
-        self._output_dir = Path(output_dir) / benchmark_name
+        model_name = client._model.replace("/", "_")
+        self._output_dir = Path(output_dir) / model_name / benchmark_name
         self._output_dir.mkdir(parents=True, exist_ok=True)
 
     def _apply_limit(self, data: list[T]) -> list[T]:

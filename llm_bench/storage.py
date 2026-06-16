@@ -6,8 +6,11 @@ Provides persistent storage for aggregated scores and per-sample
 predictions, enabling cross-model comparison in HTML reports.
 """
 
+import json
 import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from loguru import logger
 
@@ -75,3 +78,58 @@ class BenchmarkDB:
 
     def __exit__(self, *exc: object) -> None:
         self.close()
+
+    def save_results(
+        self,
+        model: str,
+        benchmark: str,
+        dataset: str,
+        scores: dict[str, dict[str, Any]],
+        config: dict[str, Any] | None = None,
+    ) -> int:
+        """Save aggregated benchmark scores.
+
+        Args:
+            model: Model identifier.
+            benchmark: Benchmark name (e.g. ``"matharena"``).
+            dataset: Dataset name (e.g. ``"aime_2026"``).
+            scores: Mapping ``category -> {accuracy, correct, total}``.
+            config: Optional run configuration to store.
+
+        Returns:
+            The ``run_id`` of the inserted run record.
+        """
+        timestamp = datetime.now(timezone.utc).isoformat()
+        config_json = json.dumps(config) if config else None
+        cursor = self._conn.execute(
+            "INSERT INTO runs (model, benchmark, dataset, timestamp, config) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (model, benchmark, dataset, timestamp, config_json),
+        )
+        run_id = cursor.lastrowid
+        assert run_id is not None
+
+        for category, stats in scores.items():
+            self._conn.execute(
+                "INSERT INTO scores (run_id, model, benchmark, category, "
+                "accuracy, correct, total) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    run_id,
+                    model,
+                    benchmark,
+                    category,
+                    stats.get("accuracy"),
+                    stats.get("correct"),
+                    stats.get("total"),
+                ),
+            )
+
+        self._conn.commit()
+        logger.debug(
+            "Saved {} score categories for {}/{} (run_id={})",
+            len(scores),
+            model,
+            benchmark,
+            run_id,
+        )
+        return run_id

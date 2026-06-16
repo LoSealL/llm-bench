@@ -188,3 +188,108 @@ def test_clear_model_benchmark_only_clears_specified():
 
         assert len(rows) == 1
         assert rows[0]["benchmark"] == "longbench"
+
+
+def test_query_all_scores():
+    """Verify query_all_scores returns all rows and supports filtering."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "test.db"
+        with BenchmarkDB(db_path) as db:
+            db.save_results(
+                model="gpt-4",
+                benchmark="matharena",
+                dataset="aime_2026",
+                scores={
+                    "overall": {"accuracy": 75.0, "correct": 15, "total": 20},
+                },
+            )
+            db.save_results(
+                model="deepseek",
+                benchmark="matharena",
+                dataset="aime_2026",
+                scores={
+                    "overall": {"accuracy": 60.0, "correct": 12, "total": 20},
+                },
+            )
+            db.save_results(
+                model="gpt-4",
+                benchmark="longbench",
+                dataset="longbench_v2",
+                scores={
+                    "overall": {"accuracy": 80.0, "correct": 160, "total": 200},
+                },
+            )
+
+            all_scores = db.query_all_scores()
+
+        # Should have 3 rows total
+        assert len(all_scores) == 3
+        # Each row should have the expected keys
+        for row in all_scores:
+            assert "model" in row
+            assert "benchmark" in row
+            assert "category" in row
+            assert "accuracy" in row
+
+
+def test_query_samples_for_benchmark():
+    """Verify query_samples returns parsed JSON data with sample_id."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "test.db"
+        with BenchmarkDB(db_path) as db:
+            run_id = db.save_results(
+                model="gpt-4",
+                benchmark="matharena",
+                dataset="aime_2026",
+                scores={"overall": {"accuracy": 75.0, "correct": 15, "total": 20}},
+            )
+            db.save_samples(
+                run_id=run_id,
+                model="gpt-4",
+                benchmark="matharena",
+                samples=[
+                    {
+                        "sample_id": "p1",
+                        "pred": "42",
+                        "answer": "42",
+                        "correct": True,
+                    },
+                    {
+                        "sample_id": "p2",
+                        "pred": "7",
+                        "answer": "8",
+                        "correct": False,
+                    },
+                ],
+            )
+
+            samples = db.query_samples("gpt-4", "matharena")
+
+        assert len(samples) == 2
+        assert samples[0]["sample_id"] == "p1"
+        assert samples[1]["sample_id"] == "p2"
+
+
+def test_query_models():
+    """Verify query_models returns sorted distinct model names."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "test.db"
+        with BenchmarkDB(db_path) as db:
+            db.save_results(
+                model="gpt-4",
+                benchmark="matharena",
+                dataset="aime_2026",
+                scores={"overall": {"accuracy": 75.0, "correct": 15, "total": 20}},
+            )
+            db.save_results(
+                model="deepseek",
+                benchmark="longbench",
+                dataset="longbench_v2",
+                scores={
+                    "overall": {"accuracy": 80.0, "correct": 160, "total": 200},
+                },
+            )
+
+            models = db.query_models()
+
+        assert sorted(models) == ["deepseek", "gpt-4"]

@@ -206,3 +206,99 @@ class BenchmarkDB:
             benchmark,
             run_id,
         )
+
+    def query_all_scores(
+        self,
+        model: str | None = None,
+        benchmark: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Query aggregated scores with optional filtering.
+
+        Args:
+            model: If set, filter to this model only.
+            benchmark: If set, filter to this benchmark only.
+
+        Returns:
+            List of score dictionaries.
+        """
+        sql = (
+            "SELECT model, benchmark, category, accuracy, correct, total "
+            "FROM scores"
+        )
+        conditions: list[str] = []
+        params: list[Any] = []
+        if model is not None:
+            conditions.append("model = ?")
+            params.append(model)
+        if benchmark is not None:
+            conditions.append("benchmark = ?")
+            params.append(benchmark)
+        if conditions:
+            sql += " WHERE " + " AND ".join(conditions)
+        sql += " ORDER BY model, benchmark, category"
+
+        self._conn.row_factory = sqlite3.Row
+        cursor = self._conn.execute(sql, params)
+        rows = [dict(row) for row in cursor.fetchall()]
+        self._conn.row_factory = None
+        return rows
+
+    def query_samples(
+        self,
+        model: str,
+        benchmark: str,
+    ) -> list[dict[str, Any]]:
+        """Query per-sample data for a model + benchmark.
+
+        Args:
+            model: Model identifier.
+            benchmark: Benchmark name.
+
+        Returns:
+            List of sample dictionaries (``data`` field is parsed JSON).
+        """
+        self._conn.row_factory = sqlite3.Row
+        cursor = self._conn.execute(
+            "SELECT sample_id, data FROM samples "
+            "WHERE model = ? AND benchmark = ? ORDER BY id",
+            (model, benchmark),
+        )
+        results: list[dict[str, Any]] = []
+        for row in cursor.fetchall():
+            sample = json.loads(row["data"])
+            sample["sample_id"] = row["sample_id"]
+            results.append(sample)
+        self._conn.row_factory = None
+        return results
+
+    def query_models(self) -> list[str]:
+        """Return all distinct model names in the database.
+
+        Returns:
+            Sorted list of model identifiers.
+        """
+        cursor = self._conn.execute(
+            "SELECT DISTINCT model FROM runs ORDER BY model"
+        )
+        return [row[0] for row in cursor.fetchall()]
+
+    def query_benchmarks(self, model: str | None = None) -> list[str]:
+        """Return all distinct benchmark names.
+
+        Args:
+            model: If set, only return benchmarks for this model.
+
+        Returns:
+            Sorted list of benchmark names.
+        """
+        if model is not None:
+            cursor = self._conn.execute(
+                "SELECT DISTINCT benchmark FROM runs WHERE model = ? "
+                "ORDER BY benchmark",
+                (model,),
+            )
+        else:
+            cursor = self._conn.execute(
+                "SELECT DISTINCT benchmark FROM runs ORDER BY benchmark"
+            )
+        return [row[0] for row in cursor.fetchall()]

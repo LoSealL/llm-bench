@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: MIT
 """Tests for the SQLite storage module."""
 
+import json
 import sqlite3
 import tempfile
 from pathlib import Path
@@ -83,3 +84,36 @@ def test_save_results_multiple_categories():
         assert "easy" in categories
         assert "hard" in categories
         assert "overall" in categories
+
+
+def test_save_samples():
+    """Verify save_samples stores per-sample JSON data."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "test.db"
+        with BenchmarkDB(db_path) as db:
+            run_id = db.save_results(
+                model="gpt-4",
+                benchmark="matharena",
+                dataset="aime_2026",
+                scores={"overall": {"accuracy": 75.0, "correct": 15, "total": 20}},
+            )
+            db.save_samples(
+                run_id=run_id,
+                model="gpt-4",
+                benchmark="matharena",
+                samples=[
+                    {"sample_id": "p1", "pred": "42", "answer": "42", "correct": True},
+                    {"sample_id": "p2", "pred": "7", "answer": "8", "correct": False},
+                ],
+            )
+
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute("SELECT * FROM samples ORDER BY id").fetchall()
+        conn.close()
+
+        assert len(rows) == 2
+        assert rows[0]["sample_id"] == "p1"
+        data = json.loads(rows[0]["data"])
+        assert data["correct"] is True
+        assert rows[1]["sample_id"] == "p2"

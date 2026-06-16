@@ -133,3 +133,41 @@ class BenchmarkDB:
             run_id,
         )
         return run_id
+
+    def save_samples(
+        self,
+        run_id: int,
+        model: str,
+        benchmark: str,
+        samples: list[dict[str, Any]],
+        id_key: str = "sample_id",
+    ) -> None:
+        """Save per-sample prediction data.
+
+        Each sample is stored as a JSON blob keyed by ``id_key``.
+
+        Args:
+            run_id: The run this data belongs to.
+            model: Model identifier.
+            benchmark: Benchmark name.
+            samples: List of sample dictionaries.
+            id_key: Key in each sample dict that serves as the unique
+                sample identifier.
+        """
+        for sample in samples:
+            sample_id = str(sample.get(id_key, ""))
+            data = json.dumps(sample, ensure_ascii=False)
+            self._conn.execute(
+                "INSERT INTO samples (run_id, model, benchmark, sample_id, data) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (run_id, model, benchmark, sample_id, data),
+            )
+
+        self._conn.commit()
+        logger.debug(
+            "Saved {} samples for {}/{} (run_id={})",
+            len(samples),
+            model,
+            benchmark,
+            run_id,
+        )

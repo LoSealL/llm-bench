@@ -192,6 +192,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--force",
+        "-f",
         action="store_true",
         default=False,
         help="Re-run even when cached JSONL already exists.",

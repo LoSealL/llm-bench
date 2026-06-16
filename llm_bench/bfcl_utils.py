@@ -2,11 +2,10 @@
 # SPDX-License-Identifier: MIT
 """BFCL v4 utilities.
 
-Ported from bfcl-lite for standalone evaluation.
+Data loading and helpers for native tool-call evaluation.
 """
 
 import json
-import re
 from pathlib import Path
 from typing import Any
 
@@ -14,54 +13,11 @@ from loguru import logger
 
 from llm_bench.bfcl_constants import (
     ALL_CATEGORIES,
-    DEFAULT_SYSTEM_PROMPT_FORMAT,
-    OUTPUT_FORMAT_MAPPING,
-    PARAM_TYPE_MAPPING,
     POSSIBLE_ANSWER_PATH,
     PROMPT_PATH,
-    PROMPT_STYLE_TEMPLATES,
-    PROMPT_TEMPLATE_MAPPING,
     TEST_COLLECTION_MAPPING,
     VERSION_PREFIX,
 )
-
-
-def extract_test_category(
-    input_string: str | Path, raise_error: bool = True
-) -> str | None:
-    """Extract the BFCL test category from a file path or string.
-
-    Args:
-        input_string: Path or string containing a BFCL filename.
-        raise_error: Whether to raise if extraction fails.
-
-    Returns:
-        Test category name, or ``None`` if extraction fails and
-        ``raise_error`` is ``False``.
-    """
-    input_string = str(input_string)
-    pattern = rf".*{VERSION_PREFIX}_(\w+?)(?:_score|_result)?\.json"
-    match = re.search(pattern, input_string)
-    if match:
-        return match.group(1)
-    if raise_error:
-        raise ValueError(f"Could not extract test category from: {input_string}")
-    return None
-
-
-def extract_test_category_from_id(test_entry_id: str) -> str:
-    """Extract the test category from an entry identifier.
-
-    Args:
-        test_entry_id: Entry identifier, optionally with a suffix
-            separated by ``:``.
-
-    Returns:
-        Test category name.
-    """
-    if ":" in test_entry_id:
-        test_entry_id = test_entry_id.split(":")[0]
-    return test_entry_id.rsplit("_", 1)[0]
 
 
 def get_file_name_by_category(test_category: str, is_result_file: bool = False) -> str:
@@ -103,16 +59,6 @@ def is_relevance_or_irrelevance(test_category: str) -> bool:
     return "relevance" in test_category or "irrelevance" in test_category
 
 
-def is_live(test_category: str) -> bool:
-    """Return whether the category is a live evaluation."""
-    return "live" in test_category
-
-
-def is_non_live(test_category: str) -> bool:
-    """Return whether the category is not a live evaluation."""
-    return not is_live(test_category)
-
-
 def load_file(file_path: str | Path, sort_by_id: bool = False) -> list[dict[str, Any]]:
     """Load a JSON Lines file.
 
@@ -132,46 +78,6 @@ def load_file(file_path: str | Path, sort_by_id: bool = False) -> list[dict[str,
     if sort_by_id:
         result.sort(key=sort_key)
     return result
-
-
-def write_list_of_dicts_to_file(
-    filename: str, data: list[dict[str, Any]], subdir: str | Path | None = None
-) -> None:
-    """Write a list of dictionaries to a JSON Lines file.
-
-    Args:
-        filename: Output filename.
-        data: Dictionaries to serialise.
-        subdir: Optional subdirectory for the output file.
-    """
-    if subdir:
-        subdir_path = Path(subdir)
-        subdir_path.mkdir(parents=True, exist_ok=True)
-        filename = str(subdir_path / Path(filename).name)
-    abs_filename = Path(filename).resolve()
-    with open(abs_filename, "w", encoding="utf-8") as f:
-        for entry in data:
-            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-
-
-def make_json_serializable(value: Any) -> Any:
-    """Recursively convert a value to a JSON-serialisable form.
-
-    Args:
-        value: Value of any type.
-
-    Returns:
-        JSON-serialisable value.
-    """
-    if isinstance(value, dict):
-        return {k: make_json_serializable(v) for k, v in value.items()}
-    if isinstance(value, list):
-        return [make_json_serializable(item) for item in value]
-    try:
-        json.dumps(value, ensure_ascii=False)
-        return value
-    except (TypeError, ValueError):
-        return str(value)
 
 
 def sort_key(entry: dict[str, Any]) -> tuple[str, int]:
@@ -267,7 +173,7 @@ def _add_language_hint(
 
     Args:
         functions: Function schema list.
-        test_category: Category name.
+        _test_category: Category name.
 
     Returns:
         Modified function schema list.
@@ -278,259 +184,3 @@ def _add_language_hint(
     for item in functions:
         item["description"] = item.get("description", "") + hint
     return functions
-
-
-def extract_prompt_format_from_id(test_entry_id: str) -> str:
-    """Extract the prompt-format suffix from an entry identifier.
-
-    Args:
-        test_entry_id: Entry identifier.
-
-    Returns:
-        Prompt-format string, or the default format if absent.
-    """
-    if ":" not in test_entry_id:
-        return DEFAULT_SYSTEM_PROMPT_FORMAT
-    parts = test_entry_id.split(":")
-    assert len(parts) == 3, f"Invalid format sensitivity id: {test_entry_id}"
-    return parts[1]
-
-
-def system_prompt_pre_processing_chat_model(
-    prompts: list[dict[str, str]],
-    function_docs: list[dict[str, Any]],
-    test_entry_id: str,
-) -> list[dict[str, str]]:
-    """Prepend a system prompt with formatted function documentation.
-
-    Args:
-        prompts: Existing message list.
-        function_docs: Function schemas.
-        test_entry_id: Entry identifier.
-
-    Returns:
-        Message list with the updated or inserted system prompt.
-    """
-    prompt_format = extract_prompt_format_from_id(test_entry_id)
-    system_prompt = _formulate_system_prompt(prompt_format, function_docs)
-    if prompts[0]["role"] == "system":
-        prompts[0]["content"] = system_prompt + "\n\n" + prompts[0]["content"]
-    else:
-        prompts.insert(0, {"role": "system", "content": system_prompt})
-    return prompts
-
-
-def _formulate_system_prompt(
-    format_sensitivity_config: str, functions: list[dict[str, Any]]
-) -> str:
-    """Build the system prompt for a given format configuration.
-
-    Args:
-        format_sensitivity_config: Format configuration string.
-        functions: Function schemas.
-
-    Returns:
-        Rendered system prompt.
-    """
-    (
-        return_format,
-        has_tool_call_tag,
-        function_doc_format,
-        prompt_format,
-        prompt_style,
-    ) = parse_prompt_variation_params(format_sensitivity_config)
-    formatted_function_doc = _format_function_doc(functions, function_doc_format)
-    prompt_template = PROMPT_TEMPLATE_MAPPING.get(
-        prompt_format, PROMPT_TEMPLATE_MAPPING["plaintext"]
-    )
-    style_template = PROMPT_STYLE_TEMPLATES.get(
-        prompt_style, PROMPT_STYLE_TEMPLATES["classic"]
-    )
-    persona = style_template["persona"]
-    task = style_template["task"]
-    if has_tool_call_tag:
-        tool_call_format = style_template["tool_call_with_tag"].format(
-            output_format=OUTPUT_FORMAT_MAPPING[return_format],
-            param_types=PARAM_TYPE_MAPPING[return_format],
-        )
-    else:
-        tool_call_format = style_template["tool_call_no_tag"].format(
-            output_format=OUTPUT_FORMAT_MAPPING[return_format],
-            param_types=PARAM_TYPE_MAPPING[return_format],
-        )
-    multiturn_behavior = style_template["multiturn_behavior"]
-    available_tools = style_template["available_tools"].format(
-        format=function_doc_format,
-        functions=formatted_function_doc,
-    )
-    return prompt_template.format(
-        persona=persona,
-        task=task,
-        tool_call_format=tool_call_format,
-        multiturn_behavior=multiturn_behavior,
-        available_tools=available_tools,
-    )
-
-
-def parse_prompt_variation_params(input_str: str) -> tuple[str, bool, str, str, str]:
-    """Parse a format-sensitivity configuration string.
-
-    Args:
-        input_str: Configuration string.
-
-    Returns:
-        Tuple of ``(return_format, has_tool_call_tag,
-        function_doc_format, prompt_format, prompt_style)``.
-    """
-    _pattern = re.compile(
-        r"^"
-        r"ret_fmt=(?P<return_format>python|json|verbose_xml|concise_xml)"
-        r"&tool_call_tag=(?P<has_tool_call_tag>True|False)"
-        r"&func_doc_fmt=(?P<function_doc_format>python|xml|json)"
-        r"&prompt_fmt=(?P<prompt_format>plaintext|markdown)"
-        r"&style=(?P<prompt_style>classic|experimental)"
-        r"$"
-    )
-    match = _pattern.match(input_str)
-    if not match:
-        raise ValueError(f"Invalid query format: {input_str!r}")
-    return (
-        match.group("return_format"),
-        match.group("has_tool_call_tag") == "True",
-        match.group("function_doc_format"),
-        match.group("prompt_format"),
-        match.group("prompt_style"),
-    )
-
-
-def _format_function_doc(
-    functions: list[dict[str, Any]], function_doc_format: str
-) -> str:
-    """Render function schemas in the requested documentation format.
-
-    Args:
-        functions: Function schemas.
-        function_doc_format: Target format (``python``, ``xml``, or ``json``).
-
-    Returns:
-        Rendered documentation string.
-    """
-    if function_doc_format == "json":
-        return json.dumps(functions, indent=4)
-    if function_doc_format == "python":
-        return _generate_function_doc_python(functions)
-    if function_doc_format == "xml":
-        return _generate_function_doc_xml(functions)
-    raise ValueError(f"Invalid function doc format: {function_doc_format}")
-
-
-def _generate_function_doc_python(functions: list[dict[str, Any]]) -> str:
-    """Render function schemas as Python-style docstrings.
-
-    Args:
-        functions: Function schemas.
-
-    Returns:
-        Rendered Python documentation string.
-    """
-
-    def _to_py_type(meta: dict[str, Any]) -> str:
-        """Convert a JSON schema type to a Python type annotation."""
-        t = meta.get("type", "string")
-        primitive_map = {
-            "string": "str",
-            "number": "float",
-            "integer": "int",
-            "boolean": "bool",
-        }
-        if t in primitive_map:
-            return primitive_map[t]
-        if t in {"array", "list", "tuple"} and "items" in meta:
-            return f"list[{_to_py_type(meta['items'])}]"
-        if t in {"object", "dict"}:
-            return "dict"
-        return t
-
-    indent = " " * 8
-    docs: list[str] = []
-    for fn in functions:
-        lines: list[str] = []
-        lines.append(f"# Function: {fn['name']}\n")
-        lines.append('    """\n')
-        lines.append(f"    {fn.get('description', '')}\n\n")
-        params = fn.get("parameters", {}).get("properties", {})
-        if params:
-            lines.append("    Args:\n")
-            for pname, pmeta in params.items():
-                py_type = _to_py_type(pmeta)
-                desc = pmeta.get("description", "")
-                if "enum" in pmeta:
-                    desc += f" Enum values: {pmeta['enum']}."
-                default_note = ""
-                if "default" in pmeta:
-                    default_note = f", default={pmeta['default']!r}"
-                lines.append(f"{indent}{pname} ({py_type}{default_note}): {desc}\n")
-        lines.append('    """\n')
-        docs.append("".join(lines))
-    return "\n\n".join(docs)
-
-
-def _generate_function_doc_xml(functions: list[dict[str, Any]]) -> str:
-    """Render function schemas as XML documentation.
-
-    Args:
-        functions: Function schemas.
-
-    Returns:
-        Rendered XML documentation string.
-    """
-
-    def _param_xml(
-        name: str,
-        meta: dict[str, Any],
-        required_set: set[str] | None,
-        indent_lvl: int = 2,
-    ) -> str:
-        """Render a single parameter as XML."""
-        indent = " " * indent_lvl * 2
-        p_type = meta.get("type", "string")
-        p_desc = meta.get("description", "")
-        is_required = (
-            "true" if required_set is None or name in required_set else "false"
-        )
-        if "enum" in meta:
-            p_desc += f" Enum values: {meta['enum']}."
-        if "items" in meta and "type" in meta["items"]:
-            p_type = f"{p_type}[{meta['items']['type']}]"
-        attrs = [f'name="{name}" type="{p_type}" required="{is_required}"']
-        if "default" in meta:
-            attrs.append(f'default="{meta["default"]!r}"')
-        open_tag = f"{indent}<param " + " ".join(attrs).replace(",", "") + ">\n"
-        parts = [open_tag, f"{indent}  <desc>{p_desc}</desc>\n"]
-        if "properties" in meta:
-            child_required = meta.get("required", None)
-            child_set = set(child_required) if child_required else None
-            parts.append(f"{indent}  <params>\n")
-            for cname, cmeta in meta["properties"].items():
-                parts.append(_param_xml(cname, cmeta, child_set, indent_lvl + 2))
-            parts.append(f"{indent}  </params>\n")
-        parts.append(f"{indent}</param>\n")
-        return "".join(parts)
-
-    blocks: list[str] = []
-    for fn in functions:
-        name = fn["name"]
-        desc = fn.get("description", "")
-        params_schema = fn["parameters"]
-        top_props = params_schema.get("properties", {})
-        top_required = params_schema.get("required", None)
-        top_set = set(top_required) if top_required else None
-        xml = f'<function name="{name}">\n'
-        xml += f"  <desc>{desc}</desc>\n"
-        xml += "  <params>\n"
-        for pname, pmeta in top_props.items():
-            xml += _param_xml(pname, pmeta, top_set, 2)
-        xml += "  </params>\n"
-        xml += "</function>\n"
-        blocks.append(xml)
-    return "\n".join(blocks)

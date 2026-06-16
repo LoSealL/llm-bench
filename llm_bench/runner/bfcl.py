@@ -2,103 +2,100 @@
 # SPDX-License-Identifier: MIT
 """BFCL v4 benchmark runner.
 
-Evaluates function-calling ability via prompting mode using the
-OpenAI-compatible client.
+Evaluates function-calling ability via the OpenAI-compatible
+``/v1/chat/completions`` API using native tool calling. Function
+definitions are passed through the ``tools`` parameter and tool-call
+results are read directly from the structured ``message.tool_calls``
+field rather than parsed from free-form text.
 """
 
+import copy
+import json
 from pathlib import Path
 from typing import Any
 
 from loguru import logger
 
-from llm_bench.bfcl_constants import ReturnFormat
 from llm_bench.bfcl_eval import evaluate_task
-from llm_bench.bfcl_parser import ast_parse
 from llm_bench.bfcl_utils import (
     load_dataset_entry,
     parse_test_category_argument,
-    system_prompt_pre_processing_chat_model,
 )
-from llm_bench.client import LLMClient
+from llm_bench.client import ChatResponse, LLMClient
 from llm_bench.runners import BaseRunner, _JsonlWriter
 
 
-class MockHandler:
-    """Minimal handler for BFCL prompting-mode evaluation.
+def _tool_calls_to_decoded(tool_calls: list[Any]) -> list[dict[str, Any]]:
+    """Convert native OpenAI tool-call objects to the BFCL decoded format.
 
-    Provides ``decode_ast`` and ``decode_execute`` so the original
-    ``evaluate_task`` can be reused without a full model-handler
-    implementation.
-    """
-
-    @staticmethod
-    def decode_ast(
-        result: str,
-        language: ReturnFormat = ReturnFormat.PYTHON,
-        has_tool_call_tag: bool = False,
-    ) -> list[dict[str, Any]]:
-        """Decode raw model text into structured function calls."""
-        result = result.strip("`\n ")
-        if not (result.startswith("[") and result.endswith("]")):
-            result = "[" + result + "]"
-        return ast_parse(result, language, has_tool_call_tag)
-
-    @staticmethod
-    def decode_execute(result: str, has_tool_call_tag: bool = False) -> list[str]:
-        """Decode raw model text into executable Python strings."""
-        result = result.strip("`\n ")
-        if not (result.startswith("[") and result.endswith("]")):
-            result = "[" + result + "]"
-        decoded_output = ast_parse(
-            result, language=ReturnFormat.PYTHON, has_tool_call_tag=has_tool_call_tag
-        )
-        return _decoded_output_to_execution_list(decoded_output)
-
-
-def _decoded_output_to_execution_list(
-    decoded_output: list[dict[str, Any]],
-) -> list[str]:
-    """Convert decoded function calls to executable Python strings.
+    Reads the function name and arguments directly from the structured
+    ``message.tool_calls`` field — no free-form text parsing.
 
     Args:
-        decoded_output: List of function-call dictionaries.
+        tool_calls: Tool-call objects from the chat completion response.
 
     Returns:
-        List of strings like ``func_name(arg=value)``.
+        List of ``{function_name: {param: value}}`` dictionaries.
     """
-    execution_list: list[str] = []
-    for function_call in decoded_output:
-        for key, value in function_call.items():
-            args_str = ", ".join(
-                f"{k}={_parse_nested_value(v)}" for k, v in value.items()
-            )
-            execution_list.append(f"{key}({args_str})")
-    return execution_list
+    decoded: list[dict[str, Any]] = []
+    for call in tool_calls:
+        name = call.function.name
+        raw_args = call.function.arguments
+        try:
+            args = json.loads(raw_args) if raw_args else {}
+        except (json.JSONDecodeError, ValueError):
+            logger.warning("Malformed tool arguments for {}: {!r}", name, raw_args)
+            args = {}
+        decoded.append({name: args})
+    return decoded
 
 
-def _parse_nested_value(value: Any) -> str:
-    """Recursively render a parameter value as a Python literal.
+def _response_to_result(response: ChatResponse) -> list[dict[str, Any]]:
+    """Extract structured function calls from a native tool-call response.
 
     Args:
-        value: Parameter value of any type.
+        response: Structured chat response.
 
     Returns:
-        Python source representation of the value.
+        List of ``{function_name: {param: value}}`` dictionaries, or an
+        empty list when the model returned no tool calls (e.g. declined
+        to call a function).
     """
-    if isinstance(value, dict):
-        if all(isinstance(v, dict) for v in value.values()):
-            func_name = list(value.keys())[0]
-            args = value[func_name]
-            args_str = ", ".join(
-                f"{k}={_parse_nested_value(v)}" for k, v in args.items()
-            )
-            return f"{func_name}({args_str})"
-        return (
-            "{"
-            + ", ".join(f"'{k}': {_parse_nested_value(v)}" for k, v in value.items())
-            + "}"
-        )
-    return repr(value)
+    if response.tool_calls:
+        return _tool_calls_to_decoded(response.tool_calls)
+    return []
+
+
+def _bfcl_function_to_openai_tool(function: dict[str, Any]) -> dict[str, Any]:
+    """Convert a BFCL function schema to an OpenAI tool definition.
+
+    Args:
+        function: BFCL function schema using ``"type": "dict"``.
+
+    Returns:
+        OpenAI tool definition ``{"type": "function", "function": ...}``.
+    """
+    converted = _convert_dict_type_to_object(copy.deepcopy(function))
+    return {"type": "function", "function": converted}
+
+
+def _convert_dict_type_to_object(node: Any) -> Any:
+    """Recursively rewrite JSON-schema ``"type": "dict"`` to ``"object"``.
+
+    Args:
+        node: A decoded JSON-schema node.
+
+    Returns:
+        The node with every ``"type": "dict"`` replaced by
+        ``"type": "object"`` so OpenAI-compatible providers accept it.
+    """
+    if isinstance(node, dict):
+        if node.get("type") == "dict":
+            node["type"] = "object"
+        return {k: _convert_dict_type_to_object(v) for k, v in node.items()}
+    if isinstance(node, list):
+        return [_convert_dict_type_to_object(item) for item in node]
+    return node
 
 
 class BFCLRunner(BaseRunner):
@@ -150,19 +147,35 @@ class BFCLRunner(BaseRunner):
         )
 
     def _build_messages(self, entry: dict[str, Any]) -> list[dict[str, str]]:
-        """Build the message list for a single entry.
+        """Return the original message list for a single entry unchanged.
+
+        The dataset's own messages (including any system prompt) are
+        respected verbatim; BFCL no longer prepends its own system
+        prompt. Functions are exposed to the model via the native
+        ``tools`` parameter instead.
 
         Args:
-            entry: A dataset entry with ``question`` and ``function``.
+            entry: A dataset entry with a ``question`` key.
 
         Returns:
-            List of messages with roles (system, user, etc.).
+            The original message list from the dataset.
         """
-        messages: list[dict[str, str]] = list(entry["question"][0])
-        function_docs: list[dict[str, Any]] = entry.get("function", [])
-        return system_prompt_pre_processing_chat_model(
-            messages, function_docs, entry["id"]
-        )
+        return list(entry["question"][0])
+
+    def _build_tools(self, entry: dict[str, Any]) -> list[dict[str, Any]] | None:
+        """Build OpenAI tool definitions for a single entry.
+
+        Args:
+            entry: A dataset entry with a ``function`` key.
+
+        Returns:
+            OpenAI-style tool list, or ``None`` when the entry exposes
+            no functions (e.g. irrelevance probes).
+        """
+        functions: list[dict[str, Any]] = entry.get("function", [])
+        if not functions:
+            return None
+        return [_bfcl_function_to_openai_tool(fn) for fn in functions]
 
     def _predict_category(
         self,
@@ -187,10 +200,12 @@ class BFCLRunner(BaseRunner):
         results: list[dict[str, Any]] = []
         for entry in self._progress(dataset, desc=f"BFCL-{category}"):
             messages = self._build_messages(entry)
+            tools = self._build_tools(entry)
             response = self._chat(
                 messages=messages,
                 max_tokens=self._max_tokens,
                 temperature=self._temperature,
+                tools=tools,
             )
             if not response:
                 logger.warning(
@@ -200,7 +215,7 @@ class BFCLRunner(BaseRunner):
                 )
             record = {
                 "id": entry["id"],
-                "result": response.content,
+                "result": _response_to_result(response),
                 "valid": response.valid,
                 "finish_reason": response.finish_reason,
             }
@@ -227,10 +242,9 @@ class BFCLRunner(BaseRunner):
             Result dictionary with ``accuracy``, ``correct_count``,
             ``total_count``, and ``errors``.
         """
-        handler = MockHandler()
         model_name = self._client._model
         valid_predictions = [p for p in predictions if p.get("valid", True)]
-        return evaluate_task(category, valid_predictions, model_name, handler)
+        return evaluate_task(category, valid_predictions, model_name)
 
     def run(self, **kwargs: Any) -> dict[str, dict[str, Any]]:
         """Run the BFCL v4 benchmark.

@@ -26,15 +26,18 @@ class ChatResponse:
         finish_reason: The completion finish reason, if provided.
         valid: ``True`` when *finish_reason* is ``stop``,
             ``tool_calls``, or ``function_call``.
+        tool_calls: Native tool calls from ``message.tool_calls`` when
+            the request used the ``tools`` parameter, otherwise ``None``.
     """
 
     content: str
     finish_reason: str | None
     valid: bool
+    tool_calls: list[Any] | None = None
 
     def __bool__(self) -> bool:
         """Return whether the response is valid and non-empty."""
-        return self.valid and bool(self.content)
+        return self.valid and (bool(self.content) or bool(self.tool_calls))
 
 
 class LLMClient:
@@ -71,6 +74,7 @@ class LLMClient:
         max_tokens: int = 128,
         temperature: float = 0.1,
         max_retries: int = 5,
+        tools: Any | None = None,
     ) -> str:
         """Send a chat request with retries.
 
@@ -82,6 +86,8 @@ class LLMClient:
             max_tokens: Maximum number of *new* tokens to generate.
             temperature: Sampling temperature.
             max_retries: Number of retry attempts on transient failures.
+            tools: Optional OpenAI-style tool definitions enabling native
+                function calling via ``/v1/chat/completions``.
 
         Returns:
             The assistant's textual response, or an empty string if all
@@ -93,6 +99,7 @@ class LLMClient:
             max_tokens=max_tokens,
             temperature=temperature,
             max_retries=max_retries,
+            tools=tools,
         ).content
 
     def chat_with_meta(
@@ -103,6 +110,7 @@ class LLMClient:
         max_tokens: int = 128,
         temperature: float = 0.1,
         max_retries: int = 5,
+        tools: Any | None = None,
     ) -> ChatResponse:
         """Send a chat request and return content plus finish metadata.
 
@@ -114,10 +122,14 @@ class LLMClient:
             max_tokens: Maximum number of *new* tokens to generate.
             temperature: Sampling temperature.
             max_retries: Number of retry attempts on transient failures.
+            tools: Optional OpenAI-style tool definitions enabling native
+                function calling via ``/v1/chat/completions``. When
+                provided, any tool calls are returned in
+                :attr:`ChatResponse.tool_calls`.
 
         Returns:
             A :class:`ChatResponse` with the assistant's text, finish
-            reason, and validity flag.
+            reason, validity flag, and optional tool calls.
         """
         if messages is not None:
             text_parts: list[str] = []
@@ -151,17 +163,21 @@ class LLMClient:
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
+            "tools_count": len(tools) if tools else 0,
         }
         logger.trace("[REQUEST PAYLOAD] {}", payload)
 
         for attempt in range(1, max_retries + 1):
             try:
-                response = self._client.chat.completions.create(
-                    model=self._model,
-                    messages=messages,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                )
+                request_kwargs: dict[str, Any] = {
+                    "model": self._model,
+                    "messages": messages,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                }
+                if tools:
+                    request_kwargs["tools"] = tools
+                response = self._client.chat.completions.create(**request_kwargs)
                 usage = response.usage
                 finish_reason = response.choices[0].finish_reason
                 logger.trace(
@@ -174,21 +190,19 @@ class LLMClient:
                 )
 
                 msg = response.choices[0].message
-                content = msg.content
+                content = msg.content or ""
+                tool_calls = msg.tool_calls
+                is_valid = finish_reason in self.VALID_FINISH_REASONS
                 if content:
                     logger.debug("Received response ({} chars)", len(content))
+                if tool_calls:
+                    logger.debug("Received {} tool call(s)", len(tool_calls))
+                if content or tool_calls:
                     return ChatResponse(
                         content=content,
                         finish_reason=finish_reason,
-                        valid=finish_reason in self.VALID_FINISH_REASONS,
-                    )
-                reasoning = getattr(msg, "reasoning_content", None)
-                if reasoning:
-                    logger.debug("Received reasoning_content instead of content")
-                    return ChatResponse(
-                        content=reasoning,
-                        finish_reason=finish_reason,
-                        valid=finish_reason in self.VALID_FINISH_REASONS,
+                        valid=is_valid,
+                        tool_calls=list(tool_calls) if tool_calls else None,
                     )
                 logger.warning("Empty response from model")
                 return ChatResponse(

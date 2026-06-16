@@ -244,6 +244,7 @@ class BaseRunner(ABC):
         messages: Any | None = None,
         max_tokens: int = 1024,
         temperature: float = 0.0,
+        tools: Any | None = None,
     ) -> ChatResponse:
         """Send a chat request through the wrapped client.
 
@@ -257,6 +258,8 @@ class BaseRunner(ABC):
                 over ``prompt``.
             max_tokens: Maximum number of *new* tokens to generate.
             temperature: Sampling temperature.
+            tools: Optional OpenAI-style tool definitions enabling native
+                function calling via ``/v1/chat/completions``.
 
         Returns:
             A :class:`ChatResponse` with content, finish reason, and
@@ -267,6 +270,7 @@ class BaseRunner(ABC):
             messages=messages,
             max_tokens=max_tokens,
             temperature=temperature,
+            tools=tools,
         )
         if not response:
             logger.warning(

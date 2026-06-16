@@ -293,3 +293,41 @@ def test_query_models():
             models = db.query_models()
 
         assert sorted(models) == ["deepseek", "gpt-4"]
+
+
+def test_save_benchmark_results():
+    """Test the high-level helper that converts BenchmarkResults to DB rows."""
+    from llm_bench.runners import BenchmarkResults
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "test.db"
+        results = BenchmarkResults(
+            model="gpt-4",
+            matharena={"accuracy": 75.0, "correct": 15, "total": 20},
+            longbench={
+                "overall": 80.0,
+                "easy": 90.0,
+                "hard": 70.0,
+                "short": 85.0,
+                "medium": 75.0,
+                "long": 65.0,
+            },
+        )
+
+        with BenchmarkDB(db_path) as db:
+            db.save_benchmark_results(results)
+
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+        scores = conn.execute(
+            "SELECT * FROM scores ORDER BY benchmark, category"
+        ).fetchall()
+        conn.close()
+
+        # matharena: 1 score row (overall)
+        # longbench: 6 score rows (overall, easy, hard, short, medium, long)
+        assert len(scores) == 7
+        ma_scores = [s for s in scores if s["benchmark"] == "matharena"]
+        lb_scores = [s for s in scores if s["benchmark"] == "longbench"]
+        assert len(ma_scores) == 1
+        assert len(lb_scores) == 6

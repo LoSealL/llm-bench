@@ -6,13 +6,18 @@ Provides persistent storage for aggregated scores and per-sample
 predictions, enabling cross-model comparison in HTML reports.
 """
 
+from __future__ import annotations
+
 import json
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
+
+if TYPE_CHECKING:
+    from llm_bench.runners import BenchmarkResults
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS runs (
@@ -302,3 +307,120 @@ class BenchmarkDB:
                 "SELECT DISTINCT benchmark FROM runs ORDER BY benchmark"
             )
         return [row[0] for row in cursor.fetchall()]
+
+    def save_benchmark_results(
+        self,
+        results: BenchmarkResults,
+        config: dict[str, Any] | None = None,
+    ) -> dict[str, int]:
+        """Save a complete BenchmarkResults object to the database.
+
+        Converts the in-memory results structure to database rows
+        for each benchmark that has data.
+
+        Args:
+            results: Aggregated results from all runners.
+            config: Optional run configuration.
+
+        Returns:
+            Mapping ``benchmark -> run_id`` for each saved benchmark.
+        """
+        run_ids: dict[str, int] = {}
+
+        # LVEval
+        if results.lveval:
+            scores: dict[str, dict[str, Any]] = {}
+            all_vals: list[float] = []
+            for ds, lengths in results.lveval.items():
+                for length, score in lengths.items():
+                    key = f"{ds}_{length}"
+                    scores[key] = {
+                        "accuracy": score,
+                        "correct": None,
+                        "total": None,
+                    }
+                    all_vals.append(score)
+            scores["overall"] = {
+                "accuracy": sum(all_vals) / len(all_vals) if all_vals else 0.0,
+                "correct": None,
+                "total": None,
+            }
+            run_ids["lveval"] = self.save_results(
+                results.model, "lveval", "lveval", scores, config
+            )
+
+        # LongBench
+        if results.longbench:
+            lb_scores: dict[str, dict[str, Any]] = {}
+            for cat, acc in results.longbench.items():
+                lb_scores[cat] = {
+                    "accuracy": acc,
+                    "correct": None,
+                    "total": None,
+                }
+            run_ids["longbench"] = self.save_results(
+                results.model, "longbench", "longbench_v2", lb_scores, config
+            )
+
+        # MathArena
+        if results.matharena:
+            run_ids["matharena"] = self.save_results(
+                results.model,
+                "matharena",
+                "aime_2026",
+                {"overall": results.matharena},
+                config,
+            )
+
+        # BFCL
+        if results.bfcl:
+            bfcl_scores: dict[str, dict[str, Any]] = {}
+            for cat, stats in results.bfcl.items():
+                bfcl_scores[cat] = {
+                    "accuracy": stats.get("accuracy", 0.0) * 100,
+                    "correct": stats.get("correct_count", 0),
+                    "total": stats.get("total_count", 0),
+                }
+            run_ids["bfcl"] = self.save_results(
+                results.model, "bfcl", "bfcl_v4", bfcl_scores, config
+            )
+
+        # SimpleVQA
+        if results.simplevqa:
+            svqa_scores: dict[str, dict[str, Any]] = {}
+            overall = results.simplevqa.get("overall", {})
+            svqa_scores["overall"] = {
+                "accuracy": overall.get("accuracy", 0.0),
+                "correct": overall.get("correct", 0),
+                "total": overall.get("total", 0),
+            }
+            for cat, stats in results.simplevqa.get("by_category", {}).items():
+                svqa_scores[cat] = {
+                    "accuracy": stats.get("accuracy", 0.0),
+                    "correct": stats.get("correct", 0),
+                    "total": stats.get("total", 0),
+                }
+            run_ids["simplevqa"] = self.save_results(
+                results.model, "simplevqa", "simplevqa", svqa_scores, config
+            )
+
+        # CompareBench
+        if results.comparebench:
+            cb_scores: dict[str, dict[str, Any]] = {}
+            cb_overall = results.comparebench.get("overall", {})
+            cb_scores["overall"] = {
+                "accuracy": cb_overall.get("accuracy", 0.0),
+                "correct": cb_overall.get("correct", 0),
+                "total": cb_overall.get("total", 0),
+            }
+            for split, stats in results.comparebench.get("by_split", {}).items():
+                cb_scores[split] = {
+                    "accuracy": stats.get("accuracy", 0.0),
+                    "correct": stats.get("correct", 0),
+                    "total": stats.get("total", 0),
+                }
+            run_ids["comparebench"] = self.save_results(
+                results.model, "comparebench", "comparebench", cb_scores, config
+            )
+
+        return run_ids

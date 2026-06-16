@@ -270,6 +270,7 @@ function showSamples(model, bench) {{
       let val = s[k];
       if (typeof val === 'boolean') val = val ? '\\u2713' : '\\u2717';
       else if (val === null || val === undefined) val = '—';
+      else if (typeof val === 'object') val = JSON.stringify(val);
       else val = String(val);
       html += '<td title="' + val.replace(/"/g, '&quot;') + '">' + val + '</td>';
     }}

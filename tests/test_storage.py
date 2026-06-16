@@ -117,3 +117,74 @@ def test_save_samples():
         data = json.loads(rows[0]["data"])
         assert data["correct"] is True
         assert rows[1]["sample_id"] == "p2"
+
+
+def test_clear_model_benchmark():
+    """Verify clear_model_benchmark removes target data only."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "test.db"
+        with BenchmarkDB(db_path) as db:
+            run_id = db.save_results(
+                model="gpt-4",
+                benchmark="matharena",
+                dataset="aime_2026",
+                scores={"overall": {"accuracy": 75.0, "correct": 15, "total": 20}},
+            )
+            db.save_samples(
+                run_id=run_id,
+                model="gpt-4",
+                benchmark="matharena",
+                samples=[{"sample_id": "p1", "pred": "42"}],
+            )
+            # Also save a different model's data
+            db.save_results(
+                model="deepseek",
+                benchmark="matharena",
+                dataset="aime_2026",
+                scores={"overall": {"accuracy": 60.0, "correct": 12, "total": 20}},
+            )
+
+            db.clear_model_benchmark("gpt-4", "matharena")
+
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+        scores = conn.execute("SELECT * FROM scores").fetchall()
+        samples = conn.execute("SELECT * FROM samples").fetchall()
+        runs = conn.execute("SELECT * FROM runs").fetchall()
+        conn.close()
+
+        # gpt-4 data cleared
+        assert len(scores) == 1
+        assert scores[0]["model"] == "deepseek"
+        assert len(samples) == 0
+        assert len(runs) == 1
+        assert runs[0]["model"] == "deepseek"
+
+
+def test_clear_model_benchmark_only_clears_specified():
+    """Clearing model A + benchmark X should not affect model A + benchmark Y."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "test.db"
+        with BenchmarkDB(db_path) as db:
+            db.save_results(
+                model="gpt-4",
+                benchmark="matharena",
+                dataset="aime_2026",
+                scores={"overall": {"accuracy": 75.0, "correct": 15, "total": 20}},
+            )
+            db.save_results(
+                model="gpt-4",
+                benchmark="longbench",
+                dataset="longbench_v2",
+                scores={"overall": {"accuracy": 80.0, "correct": 160, "total": 200}},
+            )
+
+            db.clear_model_benchmark("gpt-4", "matharena")
+
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute("SELECT * FROM scores").fetchall()
+        conn.close()
+
+        assert len(rows) == 1
+        assert rows[0]["benchmark"] == "longbench"

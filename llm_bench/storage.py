@@ -134,6 +134,41 @@ class BenchmarkDB:
         )
         return run_id
 
+    def clear_model_benchmark(self, model: str, benchmark: str) -> None:
+        """Delete all data for a specific model + benchmark pair.
+
+        Removes matching rows from ``runs``, ``scores``, and
+        ``samples``. Used when ``--force`` is specified.
+
+        Args:
+            model: Model identifier.
+            benchmark: Benchmark name.
+        """
+        # Find run IDs to delete
+        cursor = self._conn.execute(
+            "SELECT id FROM runs WHERE model = ? AND benchmark = ?",
+            (model, benchmark),
+        )
+        run_ids = [row[0] for row in cursor.fetchall()]
+
+        if not run_ids:
+            return
+
+        placeholders = ",".join("?" * len(run_ids))
+        self._conn.execute(
+            f"DELETE FROM samples WHERE run_id IN ({placeholders})", run_ids
+        )
+        self._conn.execute(
+            f"DELETE FROM scores WHERE run_id IN ({placeholders})", run_ids
+        )
+        self._conn.execute(
+            f"DELETE FROM runs WHERE id IN ({placeholders})", run_ids
+        )
+        self._conn.commit()
+        logger.info(
+            "Cleared {} runs for {}/{}", len(run_ids), model, benchmark
+        )
+
     def save_samples(
         self,
         run_id: int,

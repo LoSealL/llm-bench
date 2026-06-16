@@ -468,9 +468,7 @@ def generate_html_report(db: BenchmarkDB, out_dir: Path) -> None:
                 avg = cats["overall"]["accuracy"] or 0.0
             else:
                 vals = [
-                    c["accuracy"]
-                    for c in cats.values()
-                    if c["accuracy"] is not None
+                    c["accuracy"] for c in cats.values() if c["accuracy"] is not None
                 ]
                 avg = sum(vals) / len(vals) if vals else 0.0
             chart_entries.setdefault(model, {})[bench] = round(avg, 2)

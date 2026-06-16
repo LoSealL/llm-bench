@@ -74,9 +74,7 @@ def test_save_results_multiple_categories():
 
         conn = sqlite3.connect(str(db_path))
         conn.row_factory = sqlite3.Row
-        rows = conn.execute(
-            "SELECT * FROM scores ORDER BY category"
-        ).fetchall()
+        rows = conn.execute("SELECT * FROM scores ORDER BY category").fetchall()
         conn.close()
 
         assert len(rows) == 3

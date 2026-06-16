@@ -166,13 +166,9 @@ class BenchmarkDB:
         self._conn.execute(
             f"DELETE FROM scores WHERE run_id IN ({placeholders})", run_ids
         )
-        self._conn.execute(
-            f"DELETE FROM runs WHERE id IN ({placeholders})", run_ids
-        )
+        self._conn.execute(f"DELETE FROM runs WHERE id IN ({placeholders})", run_ids)
         self._conn.commit()
-        logger.info(
-            "Cleared {} runs for {}/{}", len(run_ids), model, benchmark
-        )
+        logger.info("Cleared {} runs for {}/{}", len(run_ids), model, benchmark)
 
     def save_samples(
         self,
@@ -226,10 +222,7 @@ class BenchmarkDB:
         Returns:
             List of score dictionaries.
         """
-        sql = (
-            "SELECT model, benchmark, category, accuracy, correct, total "
-            "FROM scores"
-        )
+        sql = "SELECT model, benchmark, category, accuracy, correct, total FROM scores"
         conditions: list[str] = []
         params: list[Any] = []
         if model is not None:
@@ -282,9 +275,7 @@ class BenchmarkDB:
         Returns:
             Sorted list of model identifiers.
         """
-        cursor = self._conn.execute(
-            "SELECT DISTINCT model FROM runs ORDER BY model"
-        )
+        cursor = self._conn.execute("SELECT DISTINCT model FROM runs ORDER BY model")
         return [row[0] for row in cursor.fetchall()]
 
     def query_benchmarks(self, model: str | None = None) -> list[str]:

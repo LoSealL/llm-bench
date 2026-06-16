@@ -10,10 +10,12 @@ raw per-sample data.
 import csv
 import json
 from pathlib import Path
+from typing import Any
 
 from loguru import logger
 
 from llm_bench.runners import BenchmarkResults
+from llm_bench.storage import BenchmarkDB
 
 
 def _write_csv(path: Path, headers: list[str], rows: list[list[str]]) -> None:
@@ -146,219 +148,364 @@ def generate_raw_csvs(results: BenchmarkResults, out_dir: Path) -> None:
     )
 
 
-def generate_html_report(results: BenchmarkResults, out_dir: Path) -> None:
-    """Render a summarised HTML report with Chart.js bar charts.
-
-    The report contains **no raw data tables**; only aggregated scores
-    are visualised.
+def _build_html(
+    models: list[str],
+    chart_json: str,
+    scores_json: str,
+    samples_json: str,
+    bench_names: dict[str, str],
+) -> str:
+    """Build the complete HTML report string.
 
     Args:
-        results: Aggregated results from all runners.
-        out_dir: Directory where ``benchmark_report.html`` will be
-            written.
+        models: List of model identifiers.
+        chart_json: JSON string with chart data.
+        scores_json: JSON string with all score data.
+        samples_json: JSON string with per-sample data.
+        bench_names: Mapping of benchmark keys to display names.
+
+    Returns:
+        Complete HTML document string.
     """
-    out_dir.mkdir(parents=True, exist_ok=True)
-
-    lveval_scores = [
-        sum(lengths.values()) / len(lengths) if lengths else 0.0
-        for lengths in results.lveval.values()
-    ]
-    lveval_avg = sum(lveval_scores) / len(lveval_scores) if lveval_scores else 0.0
-    lb_overall = results.longbench.get("overall", 0.0)
-    ma_acc = results.matharena.get("accuracy", 0.0)
-    bfcl_stats = results.bfcl
-    bfcl_avg = 0.0
-    if bfcl_stats:
-        bfcl_avg = sum(s.get("accuracy", 0.0) * 100 for s in bfcl_stats.values()) / len(
-            bfcl_stats
-        )
-
-    simplevqa_overall = results.simplevqa.get("overall", {})
-    simplevqa_acc = simplevqa_overall.get("accuracy", 0.0)
-
-    cb_overall = results.comparebench.get("overall", {})
-    cb_acc = cb_overall.get("accuracy", 0.0)
-
-    labels = [
-        "LVEval",
-        "LongBench-v2",
-        "MathArena",
-        "BFCL v4",
-        "SimpleVQA",
-        "CompareBench",
-    ]
-    values = [
-        round(lveval_avg, 2),
-        round(lb_overall, 2),
-        round(ma_acc, 2),
-        round(bfcl_avg, 2),
-        round(simplevqa_acc, 2),
-        round(cb_acc, 2),
-    ]
-    chart_data = json.dumps({"labels": labels, "values": values})
-
-    html = f"""<!DOCTYPE html>
+    return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Benchmark Report</title>
+<title>Benchmark Report — Multi-Model Comparison</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <style>
-  :root {{--bg:#fff;--fg:#1a1a2e;--accent:#4f46e5;--muted:#6b7280;}}
+  :root {{--bg:#fff;--fg:#1a1a2e;--accent:#4f46e5;--muted:#6b7280;--border:#e5e7eb;}}
   * {{box-sizing:border-box;margin:0;padding:0;}}
   body {{
     font-family:system-ui,-apple-system,sans-serif;
-    background:var(--bg);
-    color:var(--fg);
-    line-height:1.6;
-    padding:2rem;
+    background:var(--bg);color:var(--fg);
+    line-height:1.6;padding:2rem;
   }}
-  .container {{max-width:960px;margin:0 auto;}}
+  .container {{max-width:1200px;margin:0 auto;}}
   h1 {{font-size:1.75rem;margin-bottom:0.5rem;}}
   .subtitle {{color:var(--muted);margin-bottom:2rem;}}
   .card {{
-    background:#f8fafc;
-    border-radius:0.75rem;
-    padding:1.5rem;
-    margin-bottom:1.5rem;
+    background:#f8fafc;border-radius:0.75rem;
+    padding:1.5rem;margin-bottom:1.5rem;
     box-shadow:0 1px 3px rgba(0,0,0,0.05);
   }}
   .card h2 {{font-size:1.125rem;margin-bottom:1rem;color:var(--accent);}}
-  .metric {{
-    display:flex;
-    justify-content:space-between;
-    padding:0.5rem 0;
-    border-bottom:1px solid #e5e7eb;
+  canvas {{max-height:400px;}}
+  table {{
+    width:100%;border-collapse:collapse;margin-top:0.5rem;
+    font-size:0.875rem;
   }}
-  .metric:last-child {{border-bottom:none;}}
-  .metric span:first-child {{color:var(--muted);}}
-  .metric span:last-child {{font-weight:600;}}
-  canvas {{max-height:320px;}}
+  th,td {{padding:0.5rem 0.75rem;text-align:left;border-bottom:1px solid var(--border);}}
+  th {{background:#f1f5f9;font-weight:600;position:sticky;top:0;}}
+  tr:hover {{background:#f8fafc;}}
+  .clickable {{cursor:pointer;user-select:none;}}
+  .clickable:hover {{color:var(--accent);}}
+  .details {{display:none;margin-top:0.5rem;}}
+  .details.open {{display:block;}}
+  .toggle-icon {{display:inline-block;width:1em;transition:transform 0.2s;}}
+  .toggle-icon.open {{transform:rotate(90deg);}}
+  .badge {{
+    display:inline-block;padding:0.125rem 0.5rem;
+    border-radius:9999px;font-size:0.75rem;font-weight:600;
+  }}
+  .badge-green {{background:#d1fae5;color:#065f46;}}
+  .badge-yellow {{background:#fef3c7;color:#92400e;}}
+  .badge-red {{background:#fee2e2;color:#991b1b;}}
+  .modal-overlay {{
+    display:none;position:fixed;top:0;left:0;right:0;bottom:0;
+    background:rgba(0,0,0,0.5);z-index:1000;
+    justify-content:center;align-items:center;
+  }}
+  .modal-overlay.open {{display:flex;}}
+  .modal {{
+    background:white;border-radius:0.75rem;padding:1.5rem;
+    max-width:90vw;max-height:85vh;overflow:auto;
+    min-width:600px;box-shadow:0 20px 60px rgba(0,0,0,0.3);
+  }}
+  .modal h3 {{margin-bottom:1rem;}}
+  .modal-close {{
+    float:right;background:none;border:none;font-size:1.5rem;
+    cursor:pointer;color:var(--muted);
+  }}
+  .modal-close:hover {{color:var(--fg);}}
+  .sample-table {{font-size:0.8rem;}}
+  .sample-table td {{max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}}
+  .sample-table td.expanded {{white-space:normal;word-break:break-all;}}
+  .model-select {{
+    padding:0.5rem;border:1px solid var(--border);border-radius:0.5rem;
+    font-size:0.875rem;margin-bottom:1rem;
+  }}
 </style>
 </head>
 <body>
 <div class="container">
   <h1>LLM Benchmark Report</h1>
-  <p class="subtitle">Generated by llm-bench</p>
+  <p class="subtitle">Multi-model comparison · Generated by llm-bench</p>
 
   <div class="card">
-    <h2>Model</h2>
-    <div class="metric"><span>Model</span><span>{results.model}</span></div>
+    <h2>Model Comparison</h2>
+    <label for="modelSelect">Models:</label>
+    <select id="modelSelect" class="model-select" multiple>
+      {"".join(f'<option value="{m}" selected>{m}</option>' for m in models)}
+    </select>
+    <canvas id="comparisonChart"></canvas>
   </div>
 
-  <div class="card">
-    <h2>Overall Scores</h2>
-    <canvas id="overallChart"></canvas>
-  </div>
+  <div id="benchmarkCards"></div>
+</div>
 
-  <div class="card">
-    <h2>LVEval Summary</h2>
-    <div class="metric"><span>Average Score</span><span>{lveval_avg:.2f}</span></div>
-  </div>
-
-  <div class="card">
-    <h2>LongBench-v2 Summary</h2>
-    <div class="metric"><span>Overall</span><span>{lb_overall:.1f}%</span></div>
-    <div class="metric"><span>Easy</span><span>{
-        results.longbench.get("easy", 0.0):.1f}%</span></div>
-    <div class="metric"><span>Hard</span><span>{
-        results.longbench.get("hard", 0.0):.1f}%</span></div>
-    <div class="metric"><span>Short</span><span>{
-        results.longbench.get("short", 0.0):.1f}%</span></div>
-    <div class="metric"><span>Medium</span><span>{
-        results.longbench.get("medium", 0.0):.1f}%</span></div>
-    <div class="metric"><span>Long</span><span>{
-        results.longbench.get("long", 0.0):.1f}%</span></div>
-  </div>
-
-  <div class="card">
-    <h2>MathArena Summary</h2>
-    <div class="metric"><span>Accuracy</span><span>{ma_acc:.1f}%</span></div>
-    <div class="metric"><span>Correct</span><span>{
-        results.matharena.get("correct", 0)
-    }/{results.matharena.get("total", 0)}</span></div>
-  </div>
-
-  <div class="card">
-    <h2>BFCL v4 Summary</h2>
-    <div class="metric"><span>Average Accuracy</span><span>{bfcl_avg:.1f}%</span></div>
-    {
-        "".join(
-            f'<div class="metric"><span>{cat}</span><span>'
-            f"{stats.get('accuracy', 0.0) * 100:.1f}% "
-            f"({stats.get('correct_count', 0)}/"
-            f"{stats.get('total_count', 0)})</span></div>"
-            for cat, stats in results.bfcl.items()
-        )
-    }
-  </div>
-
-  <div class="card">
-    <h2>SimpleVQA Summary</h2>
-    <div class="metric"><span>Overall Accuracy</span><span>{
-        simplevqa_acc:.1f}%</span></div>
-    <div class="metric"><span>Correct</span><span>{
-        simplevqa_overall.get("correct", 0)
-    }/{simplevqa_overall.get("total", 0)}</span></div>
-    {
-        "".join(
-            f'<div class="metric"><span>{cat}</span><span>'
-            f"{stats.get('accuracy', 0.0):.1f}% "
-            f"({stats.get('correct', 0)}/"
-            f"{stats.get('total', 0)})</span></div>"
-            for cat, stats in results.simplevqa.get("by_category", {}).items()
-        )
-    }
-  </div>
-
-  <div class="card">
-    <h2>CompareBench Summary</h2>
-    <div class="metric"><span>Overall Accuracy</span><span>{cb_acc:.1f}%</span></div>
-    <div class="metric"><span>Correct</span><span>{cb_overall.get("correct", 0)}/{
-        cb_overall.get("total", 0)
-    }</span></div>
-    {
-        "".join(
-            f'<div class="metric"><span>{split}</span><span>'
-            f"{stats.get('accuracy', 0.0):.1f}% "
-            f"({stats.get('correct', 0)}/"
-            f"{stats.get('total', 0)})</span></div>"
-            for split, stats in results.comparebench.get("by_split", {}).items()
-        )
-    }
+<!-- Sample Detail Modal -->
+<div id="sampleModal" class="modal-overlay">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal()">&times;</button>
+    <h3 id="modalTitle">Sample Details</h3>
+    <div id="modalContent"></div>
   </div>
 </div>
 
 <script>
-  const data = {chart_data};
-  new Chart(document.getElementById('overallChart'),{{
-    type:'bar',
-    data:{{
-      labels:data.labels,
-      datasets:[{{
-        label:'Score',
-        data:data.values,
-        backgroundColor:['#4f46e5','#06b6d4','#10b981','#f59e0b','#ec4899','#8b5cf6'],
-        borderRadius:6,
-      }}]
-    }},
-    options:{{
-      responsive:true,
-      maintainAspectRatio:false,
-      scales:{{
-        y:{{
-          beginAtZero:true,
-          max:100,
-          title:{{display:true,text:'Score / Accuracy (%)'}}
+const CHART_DATA = {chart_json};
+const SCORES = {scores_json};
+const SAMPLES = {samples_json};
+const BENCH_NAMES = {json.dumps(bench_names)};
+
+const COLORS = ['#4f46e5','#06b6d4','#10b981','#f59e0b','#ec4899','#8b5cf6','#ef4444','#14b8a6'];
+
+function getBadge(accuracy) {{
+  if (accuracy >= 80) return '<span class="badge badge-green">' + accuracy.toFixed(1) + '%</span>';
+  if (accuracy >= 50) return '<span class="badge badge-yellow">' + accuracy.toFixed(1) + '%</span>';
+  return '<span class="badge badge-red">' + accuracy.toFixed(1) + '%</span>';
+}}
+
+function renderChart() {{
+  const selected = Array.from(document.getElementById('modelSelect').selectedOptions).map(o => o.value);
+  const benchmarks = Object.keys(BENCH_NAMES);
+  const labels = benchmarks.map(b => BENCH_NAMES[b] || b);
+
+  const datasets = selected.map((model, i) => ({{
+    label: model,
+    data: benchmarks.map(b => (CHART_DATA[model] && CHART_DATA[model][b]) || 0),
+    backgroundColor: COLORS[i % COLORS.length],
+    borderRadius: 6,
+  }}));
+
+  const ctx = document.getElementById('comparisonChart');
+  if (window._chart) window._chart.destroy();
+  window._chart = new Chart(ctx, {{
+    type: 'bar',
+    data: {{ labels, datasets }},
+    options: {{
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {{
+        y: {{
+          beginAtZero: true,
+          max: 100,
+          title: {{ display: true, text: 'Score / Accuracy (%)' }}
         }}
       }},
-      plugins:{{legend:{{display:false}}}}
+      plugins: {{
+        legend: {{ display: selected.length > 1 }}
+      }}
     }}
   }});
+}}
+
+function renderCards() {{
+  const container = document.getElementById('benchmarkCards');
+  container.innerHTML = '';
+
+  for (const [bench, displayName] of Object.entries(BENCH_NAMES)) {{
+    const modelsData = SCORES[bench];
+    if (!modelsData) continue;
+
+    const card = document.createElement('div');
+    card.className = 'card';
+
+    // Collect all categories across models
+    const allCats = new Set();
+    for (const model of Object.keys(modelsData)) {{
+      for (const cat of Object.keys(modelsData[model])) {{
+        allCats.add(cat);
+      }}
+    }}
+    const categories = Array.from(allCats).sort((a, b) => {{
+      if (a === 'overall') return -1;
+      if (b === 'overall') return 1;
+      return a.localeCompare(b);
+    }});
+
+    let tableHtml = '<table><thead><tr><th>Category</th>';
+    for (const model of Object.keys(modelsData)) {{
+      tableHtml += '<th>' + model + '</th>';
+    }}
+    tableHtml += '</tr></thead><tbody>';
+
+    for (const cat of categories) {{
+      const isOverall = cat === 'overall';
+      tableHtml += '<tr' + (isOverall ? ' style="font-weight:600"' : '') + '>';
+      tableHtml += '<td>' + cat + '</td>';
+      for (const model of Object.keys(modelsData)) {{
+        const entry = modelsData[model][cat];
+        if (entry) {{
+          const acc = entry.accuracy || 0;
+          let cell = getBadge(acc);
+          if (entry.correct != null && entry.total != null) {{
+            cell += ' <span style="color:var(--muted);font-size:0.75rem">(' + entry.correct + '/' + entry.total + ')</span>';
+          }}
+          tableHtml += '<td>' + cell + '</td>';
+        }} else {{
+          tableHtml += '<td>—</td>';
+        }}
+      }}
+      tableHtml += '</tr>';
+    }}
+    tableHtml += '</tbody></table>';
+
+    // Add sample detail links
+    let sampleLinks = '<div style="margin-top:0.75rem">';
+    for (const model of Object.keys(modelsData)) {{
+      if (SAMPLES[model] && SAMPLES[model][bench]) {{
+        sampleLinks += '<button onclick="showSamples(\\'' + model + '\\',\\'' + bench + '\\')" ';
+        sampleLinks += 'style="margin-right:0.5rem;padding:0.25rem 0.75rem;border:1px solid var(--border);';
+        sampleLinks += 'border-radius:0.375rem;background:white;cursor:pointer;font-size:0.8rem">';
+        sampleLinks += '\U0001f4cb ' + model + ' samples</button>';
+      }}
+    }}
+    sampleLinks += '</div>';
+
+    card.innerHTML = '<h2>' + displayName + '</h2>' + tableHtml + sampleLinks;
+    container.appendChild(card);
+  }}
+}}
+
+function showSamples(model, bench) {{
+  const samples = SAMPLES[model] && SAMPLES[model][bench];
+  if (!samples) return;
+
+  document.getElementById('modalTitle').textContent = model + ' — ' + (BENCH_NAMES[bench] || bench) + ' Samples';
+
+  // Build sample table
+  const keys = Object.keys(samples[0]).filter(k => k !== 'sample_id' && k !== 'response' && k !== 'context');
+  let html = '<div style="margin-bottom:0.5rem;color:var(--muted);font-size:0.8rem">' + samples.length + ' samples</div>';
+  html += '<table class="sample-table"><thead><tr><th>#</th>';
+  for (const k of keys) {{
+    html += '<th>' + k + '</th>';
+  }}
+  html += '<th>response</th></tr></thead><tbody>';
+
+  for (let i = 0; i < samples.length; i++) {{
+    const s = samples[i];
+    html += '<tr><td>' + (i + 1) + '</td>';
+    for (const k of keys) {{
+      let val = s[k];
+      if (typeof val === 'boolean') val = val ? '\\u2713' : '\\u2717';
+      else if (val === null || val === undefined) val = '—';
+      else val = String(val);
+      html += '<td title="' + val.replace(/"/g, '&quot;') + '">' + val + '</td>';
+    }}
+    const resp = s.response || '';
+    html += '<td title="' + resp.replace(/"/g, '&quot;').substring(0, 200) + '">' + resp.substring(0, 100) + (resp.length > 100 ? '\\u2026' : '') + '</td>';
+    html += '</tr>';
+  }}
+  html += '</tbody></table>';
+
+  document.getElementById('modalContent').innerHTML = html;
+  document.getElementById('sampleModal').classList.add('open');
+}}
+
+function closeModal() {{
+  document.getElementById('sampleModal').classList.remove('open');
+}}
+
+document.getElementById('sampleModal').addEventListener('click', function(e) {{
+  if (e.target === this) closeModal();
+}});
+
+document.getElementById('modelSelect').addEventListener('change', renderChart);
+
+// Initial render
+renderChart();
+renderCards();
 </script>
 </body>
 </html>"""
+
+
+def generate_html_report(db: BenchmarkDB, out_dir: Path) -> None:
+    """Render a multi-model comparison HTML report from SQLite data.
+
+    Generates a self-contained HTML file with:
+    - Bar chart comparing models across benchmarks
+    - Expandable per-benchmark score tables
+    - Per-sample detail modal
+
+    Args:
+        db: Open database connection with historical data.
+        out_dir: Directory where ``benchmark_report.html`` will be
+            written.
+    """
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Gather data from DB
+    models = db.query_models()
+    all_scores = db.query_all_scores()
+
+    # Build structured data: benchmark -> model -> category -> score row
+    benchmark_data: dict[str, dict[str, dict[str, Any]]] = {}
+    for row in all_scores:
+        bench = row["benchmark"]
+        model = row["model"]
+        cat = row["category"]
+        benchmark_data.setdefault(bench, {}).setdefault(model, {})[cat] = row
+
+    # Compute overall averages per model per benchmark for the chart
+    chart_entries: dict[str, dict[str, float]] = {}
+    for bench, models_data in benchmark_data.items():
+        for model, cats in models_data.items():
+            if "overall" in cats:
+                avg = cats["overall"]["accuracy"] or 0.0
+            else:
+                vals = [
+                    c["accuracy"]
+                    for c in cats.values()
+                    if c["accuracy"] is not None
+                ]
+                avg = sum(vals) / len(vals) if vals else 0.0
+            chart_entries.setdefault(model, {})[bench] = round(avg, 2)
+
+    # Prepare JSON data for the HTML
+    chart_json = json.dumps(chart_entries)
+    scores_json = json.dumps(benchmark_data)
+
+    # Build sample data per model+benchmark
+    sample_data: dict[str, dict[str, list[dict[str, Any]]]] = {}
+    for model in models:
+        benchmarks = db.query_benchmarks(model)
+        for bench in benchmarks:
+            samples = db.query_samples(model, bench)
+            if samples:
+                sample_data.setdefault(model, {})[bench] = samples
+    samples_json = json.dumps(sample_data, ensure_ascii=False)
+
+    # Benchmark display names
+    bench_names = {
+        "lveval": "LVEval",
+        "longbench": "LongBench-v2",
+        "matharena": "MathArena",
+        "bfcl": "BFCL v4",
+        "simplevqa": "SimpleVQA",
+        "comparebench": "CompareBench",
+    }
+
+    html = _build_html(
+        models=models,
+        chart_json=chart_json,
+        scores_json=scores_json,
+        samples_json=samples_json,
+        bench_names=bench_names,
+    )
 
     report_path = out_dir / "benchmark_report.html"
     report_path.write_text(html, encoding="utf-8")

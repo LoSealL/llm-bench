@@ -82,10 +82,11 @@ def _bfcl_function_to_openai_tool(function: dict[str, Any]) -> dict[str, Any]:
 def _convert_dict_type_to_object(node: Any) -> Any:
     """Recursively rewrite non-standard JSON-schema types.
 
-    BFCL data uses ``"type": "dict"`` (not valid JSON Schema) and
-    ``"type": "float"`` (not a valid OpenAI tool type). This function
-    rewrites them to ``"object"`` and ``"number"`` respectively so
-    OpenAI-compatible providers accept the schema.
+    BFCL data uses ``"type": "dict"``, ``"type": "float"``, and
+    ``"type": "tuple"`` — none of which are valid JSON Schema types.
+    This function rewrites them to ``"object"``, ``"number"``, and
+    ``"array"`` respectively so OpenAI-compatible providers accept
+    the schema.
 
     Args:
         node: A decoded JSON-schema node.
@@ -98,6 +99,8 @@ def _convert_dict_type_to_object(node: Any) -> Any:
             node["type"] = "object"
         elif node.get("type") == "float":
             node["type"] = "number"
+        elif node.get("type") == "tuple":
+            node["type"] = "array"
         return {k: _convert_dict_type_to_object(v) for k, v in node.items()}
     if isinstance(node, list):
         return [_convert_dict_type_to_object(item) for item in node]

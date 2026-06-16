@@ -18,7 +18,7 @@ from loguru import logger
 from llm_bench.bfcl_constants import ALL_CATEGORIES, TEST_COLLECTION_MAPPING
 from llm_bench.client import LLMClient
 from llm_bench.config import load_config
-from llm_bench.reporter import generate_html_report, generate_raw_csvs
+from llm_bench.reporter import generate_html_report
 from llm_bench.runner import (
     BFCLRunner,
     CompareBenchRunner,
@@ -499,7 +499,6 @@ def main() -> None:
     _save_samples_to_db(db, config.model, args)
 
     logger.info("Generating reports")
-    generate_raw_csvs(results, out_dir)
     generate_html_report(db, out_dir)
     db.close()
     logger.info("Done.")

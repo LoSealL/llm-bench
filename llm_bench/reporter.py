@@ -2,150 +2,18 @@
 # SPDX-License-Identifier: MIT
 """Result reporting utilities.
 
-Generates raw CSV files and a summarised HTML dashboard for benchmark
-runs. The HTML page uses Chart.js for bar charts and contains **no**
-raw per-sample data.
+Generates a summarised HTML dashboard for benchmark runs from SQLite
+historical data. Supports multi-model comparison with Chart.js charts,
+expandable score tables, and per-sample detail modals.
 """
 
-import csv
 import json
 from pathlib import Path
 from typing import Any
 
 from loguru import logger
 
-from llm_bench.runners import BenchmarkResults
 from llm_bench.storage import BenchmarkDB
-
-
-def _write_csv(path: Path, headers: list[str], rows: list[list[str]]) -> None:
-    """Write a CSV file using the standard library.
-
-    Args:
-        path: Output file path.
-        headers: Column names.
-        rows: Data rows.
-    """
-    with path.open("w", newline="", encoding="utf-8") as fh:
-        writer = csv.writer(fh)
-        writer.writerow(headers)
-        writer.writerows(rows)
-
-
-def generate_raw_csvs(results: BenchmarkResults, out_dir: Path) -> None:
-    """Persist per-dataset results as CSV files.
-
-    Args:
-        results: Aggregated results from all runners.
-        out_dir: Directory where ``raw/`` will be created.
-    """
-    raw_dir = out_dir / "raw"
-    raw_dir.mkdir(parents=True, exist_ok=True)
-
-    lveval_rows: list[list[str]] = []
-    for ds, lengths in results.lveval.items():
-        for length, score in lengths.items():
-            lveval_rows.append([ds, length, str(score)])
-    _write_csv(
-        raw_dir / "lveval_results.csv",
-        ["dataset", "length", "score"],
-        lveval_rows,
-    )
-
-    lb = results.longbench
-    lb_rows: list[list[str]] = [
-        ["overall", str(lb.get("overall", 0.0))],
-        ["easy", str(lb.get("easy", 0.0))],
-        ["hard", str(lb.get("hard", 0.0))],
-        ["short", str(lb.get("short", 0.0))],
-        ["medium", str(lb.get("medium", 0.0))],
-        ["long", str(lb.get("long", 0.0))],
-    ]
-    _write_csv(
-        raw_dir / "longbench_results.csv",
-        ["category", "accuracy"],
-        lb_rows,
-    )
-
-    ma = results.matharena
-    ma_rows: list[list[str]] = [
-        ["accuracy", str(ma.get("accuracy", 0.0))],
-        ["correct", str(ma.get("correct", 0))],
-        ["total", str(ma.get("total", 0))],
-    ]
-    _write_csv(
-        raw_dir / "matharena_results.csv",
-        ["metric", "value"],
-        ma_rows,
-    )
-
-    bfcl_rows: list[list[str]] = []
-    for category, stats in results.bfcl.items():
-        bfcl_rows.append(
-            [
-                category,
-                str(round(stats.get("accuracy", 0.0) * 100, 2)),
-                str(stats.get("correct_count", 0)),
-                str(stats.get("total_count", 0)),
-            ]
-        )
-    _write_csv(
-        raw_dir / "bfcl_results.csv",
-        ["category", "accuracy", "correct", "total"],
-        bfcl_rows,
-    )
-
-    simplevqa = results.simplevqa
-    simplevqa_rows: list[list[str]] = []
-    overall = simplevqa.get("overall", {})
-    simplevqa_rows.append(
-        [
-            "overall",
-            str(overall.get("accuracy", 0.0)),
-            str(overall.get("correct", 0)),
-            str(overall.get("total", 0)),
-        ]
-    )
-    for cat, stats in simplevqa.get("by_category", {}).items():
-        simplevqa_rows.append(
-            [
-                cat,
-                str(stats.get("accuracy", 0.0)),
-                str(stats.get("correct", 0)),
-                str(stats.get("total", 0)),
-            ]
-        )
-    _write_csv(
-        raw_dir / "simplevqa_results.csv",
-        ["category", "accuracy", "correct", "total"],
-        simplevqa_rows,
-    )
-
-    cb = results.comparebench
-    cb_rows: list[list[str]] = []
-    cb_overall = cb.get("overall", {})
-    cb_rows.append(
-        [
-            "overall",
-            str(cb_overall.get("accuracy", 0.0)),
-            str(cb_overall.get("correct", 0)),
-            str(cb_overall.get("total", 0)),
-        ]
-    )
-    for split, stats in cb.get("by_split", {}).items():
-        cb_rows.append(
-            [
-                split,
-                str(stats.get("accuracy", 0.0)),
-                str(stats.get("correct", 0)),
-                str(stats.get("total", 0)),
-            ]
-        )
-    _write_csv(
-        raw_dir / "comparebench_results.csv",
-        ["split", "accuracy", "correct", "total"],
-        cb_rows,
-    )
 
 
 def _build_html(

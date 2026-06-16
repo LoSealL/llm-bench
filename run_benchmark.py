@@ -7,9 +7,11 @@ evaluations; generates a consolidated report for selected benchmarks.
 """
 
 import argparse
+import json
 import sys
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 from loguru import logger
 
@@ -26,6 +28,7 @@ from llm_bench.runner import (
     SimpleVQARunner,
 )
 from llm_bench.runners import BenchmarkResults
+from llm_bench.storage import BenchmarkDB
 
 
 def parse_args() -> argparse.Namespace:
@@ -208,6 +211,124 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
+def _save_samples_to_db(
+    db: BenchmarkDB,
+    model: str,
+    args: argparse.Namespace,
+) -> None:
+    """Load per-sample JSONL data and save to the database.
+
+    Reads the JSONL files produced by each runner and persists
+    them to SQLite for historical querying.
+
+    Args:
+        db: Open database connection.
+        model: Model identifier.
+        args: Parsed CLI arguments (to know which benchmarks ran).
+    """
+    out_dir = Path(args.output_dir)
+
+    def _get_run_id(benchmark: str) -> int | None:
+        """Return latest run_id for model+benchmark, or None."""
+        cursor = db._conn.execute(
+            "SELECT id FROM runs WHERE model = ? AND benchmark = ? "
+            "ORDER BY id DESC LIMIT 1",
+            (model, benchmark),
+        )
+        row = cursor.fetchone()
+        return row[0] if row else None
+
+    def _load_jsonl(path: Path) -> list[dict[str, Any]]:
+        """Load records from a JSONL file, skipping bad lines."""
+        records: list[dict[str, Any]] = []
+        try:
+            with path.open("r", encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if line:
+                        records.append(json.loads(line))
+        except (json.JSONDecodeError, OSError) as exc:
+            logger.warning("Failed to load {} for DB: {}", path, exc)
+        return records
+
+    def _load_and_save(
+        benchmark: str,
+        filename: str,
+        id_key: str = "sample_id",
+    ) -> None:
+        jsonl_path = out_dir / benchmark / filename
+        if not jsonl_path.exists():
+            return
+        records = _load_jsonl(jsonl_path)
+        if records:
+            run_id = _get_run_id(benchmark)
+            if run_id is not None:
+                db.save_samples(
+                    run_id=run_id,
+                    model=model,
+                    benchmark=benchmark,
+                    samples=records,
+                    id_key=id_key,
+                )
+
+    # LVEval: multiple JSONL files per dataset
+    if args.lveval:
+        lveval_dir = out_dir / "lveval"
+        if lveval_dir.exists():
+            run_id = _get_run_id("lveval")
+            if run_id is not None:
+                for jsonl_file in lveval_dir.glob("*.jsonl"):
+                    dataset_name = jsonl_file.stem
+                    records = _load_jsonl(jsonl_file)
+                    if records:
+                        for i, rec in enumerate(records):
+                            if "sample_id" not in rec:
+                                rec["sample_id"] = f"{dataset_name}_{i}"
+                        db.save_samples(
+                            run_id=run_id,
+                            model=model,
+                            benchmark="lveval",
+                            samples=records,
+                            id_key="sample_id",
+                        )
+
+    # LongBench
+    if args.longbench:
+        _load_and_save("longbench", "predictions.jsonl", id_key="_id")
+
+    # MathArena
+    if args.matharena:
+        _load_and_save("matharena", "predictions.jsonl", id_key="problem_idx")
+
+    # BFCL: per-category JSONL files
+    if args.bfcl:
+        bfcl_dir = out_dir / "bfcl"
+        if bfcl_dir.exists():
+            run_id = _get_run_id("bfcl")
+            if run_id is not None:
+                for jsonl_file in bfcl_dir.glob("*.jsonl"):
+                    records = _load_jsonl(jsonl_file)
+                    if records:
+                        for rec in records:
+                            if "sample_id" not in rec:
+                                rec["sample_id"] = rec.get("id", "")
+                        db.save_samples(
+                            run_id=run_id,
+                            model=model,
+                            benchmark="bfcl",
+                            samples=records,
+                            id_key="sample_id",
+                        )
+
+    # SimpleVQA
+    if args.simplevqa:
+        _load_and_save("simplevqa", "predictions.jsonl", id_key="data_id")
+
+    # CompareBench
+    if args.comparebench:
+        _load_and_save("comparebench", "predictions.jsonl", id_key="data_id")
+
+
 def main() -> None:
     """Execute the benchmark pipeline."""
     args = parse_args()
@@ -252,6 +373,39 @@ def main() -> None:
             "benchmarks to run."
         )
         return
+
+    # Open database for historical storage
+    out_dir = Path(args.output_dir)
+    db_path = out_dir / "benchmarks.db"
+    db = BenchmarkDB(db_path)
+
+    # Build config dict for storage
+    run_config = {
+        "max_length": args.max_length,
+        "max_tokens": args.max_tokens,
+        "temperature": args.temperature,
+        "limit": args.limit,
+    }
+
+    # Collect which benchmarks will run for --force clearing
+    benchmarks_to_run: list[str] = []
+    if args.lveval:
+        benchmarks_to_run.append("lveval")
+    if args.longbench:
+        benchmarks_to_run.append("longbench")
+    if args.matharena:
+        benchmarks_to_run.append("matharena")
+    if args.bfcl:
+        benchmarks_to_run.append("bfcl")
+    if args.simplevqa:
+        benchmarks_to_run.append("simplevqa")
+    if args.comparebench:
+        benchmarks_to_run.append("comparebench")
+
+    # Clear model+benchmark data when --force is used
+    if args.force:
+        for bench in benchmarks_to_run:
+            db.clear_model_benchmark(config.model, bench)
 
     if args.lveval:
         logger.info("Running LVEval")
@@ -336,10 +490,17 @@ def main() -> None:
             selected_splits=args.comparebench_splits,
         )
 
+    # Save aggregated results to SQLite
+    logger.info("Saving results to database")
+    db.save_benchmark_results(results, config=run_config)
+
+    # Save per-sample data from JSONL files to SQLite
+    _save_samples_to_db(db, config.model, args)
+
     logger.info("Generating reports")
-    out_dir = Path(args.output_dir)
     generate_raw_csvs(results, out_dir)
-    generate_html_report(results, out_dir)
+    generate_html_report(db, out_dir)
+    db.close()
     logger.info("Done.")
 
 

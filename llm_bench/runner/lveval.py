@@ -133,6 +133,7 @@ class LVEvalRunner(BaseRunner):
     def _predict_dataset(
         self,
         dataset_name: str,
+        skip: int = 0,
         writer: _JsonlWriter | None = None,
     ) -> list[dict[str, Any]]:
         """Run inference on a single LVEval dataset.
@@ -140,6 +141,7 @@ class LVEvalRunner(BaseRunner):
         Args:
             dataset_name: Fully qualified dataset name with length
                 suffix.
+            skip: Number of samples to skip (already cached).
             writer: Optional streaming JSONL writer.
 
         Returns:
@@ -152,6 +154,9 @@ class LVEvalRunner(BaseRunner):
             data_path=f"data/lveval/{dataset_base}",
         )
         datas = self._apply_limit(datas)
+        if skip:
+            datas = datas[skip:]
+            logger.info("Skipping {} cached samples for {}", skip, dataset_name)
         logger.info(
             "Predicting LVEval dataset {} with {} samples", dataset_name, len(datas)
         )
@@ -257,21 +262,14 @@ class LVEvalRunner(BaseRunner):
 
         for dataset_name in datasets:
             filename = f"{dataset_name}.jsonl"
-            if not self._force:
-                existing = self._load_existing_jsonl(filename)
-                if existing is not None:
-                    logger.info(
-                        "Skipping {} — {} already exists (use --force to re-run)",
-                        dataset_name,
-                        filename,
-                    )
-                    preds = existing
-                else:
-                    with self._open_jsonl(filename) as writer:
-                        preds = self._predict_dataset(dataset_name, writer=writer)
-            else:
-                with self._open_jsonl(filename) as writer:
-                    preds = self._predict_dataset(dataset_name, writer=writer)
+            existing, writer = self._resume_jsonl(filename)
+            try:
+                new_preds = self._predict_dataset(
+                    dataset_name, skip=len(existing), writer=writer
+                )
+            finally:
+                writer.close()
+            preds = existing + new_preds
 
             score = self._score_dataset(dataset_name, preds)
             dataset_base = re.split(r"_.{1,3}k", dataset_name)[0]

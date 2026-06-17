@@ -139,10 +139,15 @@ class SimpleVQARunner(BaseRunner):
         """
         return self._normalize_text(pred) == self._normalize_text(answer)
 
-    def _predict(self, writer: _JsonlWriter | None = None) -> list[dict[str, Any]]:
+    def _predict(
+        self,
+        skip: int = 0,
+        writer: _JsonlWriter | None = None,
+    ) -> list[dict[str, Any]]:
         """Run inference on SimpleVQA.
 
         Args:
+            skip: Number of samples to skip (already cached).
             writer: Optional streaming JSONL writer.
 
         Returns:
@@ -155,6 +160,10 @@ class SimpleVQARunner(BaseRunner):
             "test",
             "SimpleVQA",
         )
+
+        if skip:
+            data_all = data_all[skip:]
+            logger.info("Skipping {} cached samples", skip)
 
         results: list[dict[str, Any]] = []
         for item in self._progress(data_all, desc="SimpleVQA"):
@@ -219,20 +228,12 @@ class SimpleVQARunner(BaseRunner):
             Dictionary with keys ``overall`` and ``by_category``.
         """
         filename = "predictions.jsonl"
-        if not self._force:
-            existing = self._load_existing_jsonl(filename)
-            if existing is not None:
-                logger.info(
-                    "Skipping SimpleVQA — {} already exists (use --force to re-run)",
-                    filename,
-                )
-                data = existing
-            else:
-                with self._open_jsonl(filename) as writer:
-                    data = self._predict(writer=writer)
-        else:
-            with self._open_jsonl(filename) as writer:
-                data = self._predict(writer=writer)
+        existing, writer = self._resume_jsonl(filename)
+        try:
+            new_data = self._predict(skip=len(existing), writer=writer)
+        finally:
+            writer.close()
+        data = existing + new_data
 
         stats = self._compute_stats(data)
         o = stats["overall"]

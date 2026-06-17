@@ -191,12 +191,14 @@ class BFCLRunner(BaseRunner):
     def _predict_category(
         self,
         category: str,
+        skip: int = 0,
         writer: _JsonlWriter | None = None,
     ) -> list[dict[str, Any]]:
         """Run inference on a single BFCL category.
 
         Args:
             category: BFCL category name.
+            skip: Number of samples to skip (already cached).
             writer: Optional streaming JSONL writer.
 
         Returns:
@@ -207,6 +209,10 @@ class BFCLRunner(BaseRunner):
         dataset = self._apply_limit(dataset)
         if self._limit is not None:
             logger.info("Limited to {} samples", self._limit)
+
+        if skip:
+            dataset = dataset[skip:]
+            logger.info("Skipping {} cached samples for {}", skip, category)
 
         results: list[dict[str, Any]] = []
         for entry in self._progress(dataset, desc=f"BFCL-{category}"):
@@ -267,21 +273,14 @@ class BFCLRunner(BaseRunner):
         all_results: dict[str, dict[str, Any]] = {}
         for category in self._categories:
             filename = f"{category}.jsonl"
-            if not self._force:
-                existing = self._load_existing_jsonl(filename)
-                if existing is not None:
-                    logger.info(
-                        "Skipping BFCL {} — {} already exists (use --force to re-run)",
-                        category,
-                        filename,
-                    )
-                    predictions = existing
-                else:
-                    with self._open_jsonl(filename) as writer:
-                        predictions = self._predict_category(category, writer=writer)
-            else:
-                with self._open_jsonl(filename) as writer:
-                    predictions = self._predict_category(category, writer=writer)
+            existing, writer = self._resume_jsonl(filename)
+            try:
+                new_predictions = self._predict_category(
+                    category, skip=len(existing), writer=writer
+                )
+            finally:
+                writer.close()
+            predictions = existing + new_predictions
 
             stats = self._score_category(category, predictions)
             all_results[category] = stats

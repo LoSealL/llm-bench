@@ -93,10 +93,15 @@ class MathArenaRunner(BaseRunner):
             return False
         return pred.strip() == answer.strip()
 
-    def _predict(self, writer: _JsonlWriter | None = None) -> list[dict[str, Any]]:
+    def _predict(
+        self,
+        skip: int = 0,
+        writer: _JsonlWriter | None = None,
+    ) -> list[dict[str, Any]]:
         """Run inference on the AIME 2026 dataset.
 
         Args:
+            skip: Number of samples to skip (already cached).
             writer: Optional streaming JSONL writer.
 
         Returns:
@@ -108,6 +113,9 @@ class MathArenaRunner(BaseRunner):
             "train",
             "MathArena",
         )
+        if skip:
+            dataset = dataset[skip:]
+            logger.info("Skipping {} cached samples", skip)
         results: list[dict[str, Any]] = []
 
         for item in self._progress(dataset, desc="MathArena"):
@@ -141,20 +149,12 @@ class MathArenaRunner(BaseRunner):
             Dictionary with keys ``accuracy``, ``correct``, ``total``.
         """
         filename = "predictions.jsonl"
-        if not self._force:
-            existing = self._load_existing_jsonl(filename)
-            if existing is not None:
-                logger.info(
-                    "Skipping MathArena — {} already exists (use --force to re-run)",
-                    filename,
-                )
-                data = existing
-            else:
-                with self._open_jsonl(filename) as writer:
-                    data = self._predict(writer=writer)
-        else:
-            with self._open_jsonl(filename) as writer:
-                data = self._predict(writer=writer)
+        existing, writer = self._resume_jsonl(filename)
+        try:
+            new_data = self._predict(skip=len(existing), writer=writer)
+        finally:
+            writer.close()
+        data = existing + new_data
 
         logger.debug("Computing MathArena accuracy for {} predictions", len(data))
         stats = self._overall_stats(data)

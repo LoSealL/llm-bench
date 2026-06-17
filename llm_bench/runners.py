@@ -200,6 +200,40 @@ class BaseRunner(ABC):
         logger.info("Loaded {} existing records from {}", len(records), path)
         return records
 
+    def _resume_jsonl(
+        self,
+        filename: str,
+    ) -> tuple[list[dict[str, Any]], _JsonlWriter]:
+        """Load existing records and open file for appending.
+
+        When ``--force`` is set, existing data is discarded and the
+        file is truncated. Otherwise, existing records are loaded and
+        the file is opened in append mode so new records continue
+        where the previous run left off.
+
+        Args:
+            filename: Output file name.
+
+        Returns:
+            A 2-tuple of ``(existing_records, writer)``. The writer
+            is already entered as a context manager — the caller
+            **must** close it (or use a ``with`` block on the
+            returned writer).
+        """
+        if self._force:
+            return [], self._open_jsonl(filename, truncate=True)
+
+        existing = self._load_existing_jsonl(filename)
+        if existing is not None:
+            logger.info(
+                "Resuming from {} existing records in {}",
+                len(existing),
+                filename,
+            )
+            return existing, self._open_jsonl(filename, truncate=False)
+
+        return [], self._open_jsonl(filename, truncate=True)
+
     @staticmethod
     def _accuracy(
         correct: float,

@@ -147,12 +147,14 @@ class CompareBenchRunner(BaseRunner):
     def _predict_split(
         self,
         split_name: str,
+        skip: int = 0,
         writer: _JsonlWriter | None = None,
     ) -> list[dict[str, Any]]:
         """Run inference on a single CompareBench split.
 
         Args:
             split_name: Name of the dataset split to evaluate.
+            skip: Number of samples to skip (already cached).
             writer: Optional streaming JSONL writer.
 
         Returns:
@@ -164,9 +166,14 @@ class CompareBenchRunner(BaseRunner):
             f"CompareBench/{split_name}",
         )
 
+        if skip:
+            dataset = dataset[skip:]
+            logger.info("Skipping {} cached samples for {}", skip, split_name)
+
         results: list[dict[str, Any]] = []
         for idx, item in enumerate(
-            self._progress(dataset, desc=f"CompareBench/{split_name}")
+            self._progress(dataset, desc=f"CompareBench/{split_name}"),
+            start=skip,
         ):
             row = dict(item)
             raw_image = row["image"]
@@ -252,26 +259,30 @@ class CompareBenchRunner(BaseRunner):
         splits = selected_splits if selected_splits is not None else _SPLITS
         filename = "predictions.jsonl"
 
-        if not self._force:
-            existing = self._load_existing_jsonl(filename)
-            if existing is not None:
-                logger.info(
-                    "Skipping CompareBench — {} already exists (use --force to re-run)",
-                    filename,
+        existing, writer = self._resume_jsonl(filename)
+        try:
+            # Count existing records per split for partial resume
+            existing_by_split: dict[str, int] = {}
+            for rec in existing:
+                s = rec.get("split", "")
+                existing_by_split[s] = existing_by_split.get(s, 0) + 1
+
+            new_results: list[dict[str, Any]] = []
+            for split_name in splits:
+                skip = existing_by_split.get(split_name, 0)
+                if skip:
+                    logger.info(
+                        "Skipping {} cached samples for {}",
+                        skip,
+                        split_name,
+                    )
+                split_results = self._predict_split(
+                    split_name, skip=skip, writer=writer
                 )
-                all_results = existing
-            else:
-                all_results = []
-                with self._open_jsonl(filename) as writer:
-                    for split_name in splits:
-                        split_results = self._predict_split(split_name, writer=writer)
-                        all_results.extend(split_results)
-        else:
-            all_results = []
-            with self._open_jsonl(filename) as writer:
-                for split_name in splits:
-                    split_results = self._predict_split(split_name, writer=writer)
-                    all_results.extend(split_results)
+                new_results.extend(split_results)
+        finally:
+            writer.close()
+        all_results = existing + new_results
 
         stats = self._compute_stats(all_results)
         o = stats["overall"]

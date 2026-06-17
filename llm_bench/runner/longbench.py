@@ -110,10 +110,15 @@ class LongBenchRunner(BaseRunner):
             return False
         return pred.strip().upper() == answer.strip().upper()
 
-    def _predict(self, writer: _JsonlWriter | None = None) -> list[dict[str, Any]]:
+    def _predict(
+        self,
+        skip: int = 0,
+        writer: _JsonlWriter | None = None,
+    ) -> list[dict[str, Any]]:
         """Run inference on the full LongBench-v2 dataset.
 
         Args:
+            skip: Number of samples to skip (already cached).
             writer: Optional streaming JSONL writer.
 
         Returns:
@@ -144,6 +149,10 @@ class LongBenchRunner(BaseRunner):
                     "context": row["context"],
                 }
             )
+
+        if skip:
+            data_all = data_all[skip:]
+            logger.info("Skipping {} cached samples", skip)
 
         results: list[dict[str, Any]] = []
         for item in self._progress(data_all, desc="LongBench-v2"):
@@ -234,20 +243,12 @@ class LongBenchRunner(BaseRunner):
             Aggregated accuracy statistics.
         """
         filename = "predictions.jsonl"
-        if not self._force:
-            existing = self._load_existing_jsonl(filename)
-            if existing is not None:
-                logger.info(
-                    "Skipping LongBench-v2 — {} already exists (use --force to re-run)",
-                    filename,
-                )
-                data = existing
-            else:
-                with self._open_jsonl(filename) as writer:
-                    data = self._predict(writer=writer)
-        else:
-            with self._open_jsonl(filename) as writer:
-                data = self._predict(writer=writer)
+        existing, writer = self._resume_jsonl(filename)
+        try:
+            new_data = self._predict(skip=len(existing), writer=writer)
+        finally:
+            writer.close()
+        data = existing + new_data
 
         stats = self._compute_stats(data)
         logger.info("LongBench-v2 Overall: {:.1f}%", stats["overall"])

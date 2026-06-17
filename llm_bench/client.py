@@ -181,7 +181,7 @@ class LLMClient:
                 if tools:
                     request_kwargs["tools"] = tools
                 if not self._enable_thinking:
-                    request_kwargs["enable_thinking"] = False
+                    request_kwargs["extra_body"] = {"enable_thinking": False}
                 response = self._client.chat.completions.create(**request_kwargs)
                 usage = response.usage
                 finish_reason = response.choices[0].finish_reason

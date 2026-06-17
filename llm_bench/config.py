@@ -24,11 +24,14 @@ class BenchConfig:
         base_url: OpenAI-compatible API endpoint.
         api_key: Authentication key for the endpoint.
         model: Model identifier passed to the completions endpoint.
+        enable_thinking: Whether to enable extended thinking in the
+            model. Set to ``False`` to disable.
     """
 
     base_url: str
     api_key: str
     model: str
+    enable_thinking: bool = True
 
 
 def resolve_default_model(base_url: str, api_key: str) -> str:

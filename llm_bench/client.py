@@ -62,6 +62,7 @@ class LLMClient:
             api_key=config.api_key,
         )
         self._model = config.model
+        self._enable_thinking = config.enable_thinking
         self._tokenizer = tiktoken.encoding_for_model(
             "gpt-4o-2024-08-06",
         )
@@ -179,6 +180,8 @@ class LLMClient:
                 }
                 if tools:
                     request_kwargs["tools"] = tools
+                if not self._enable_thinking:
+                    request_kwargs["enable_thinking"] = False
                 response = self._client.chat.completions.create(**request_kwargs)
                 usage = response.usage
                 finish_reason = response.choices[0].finish_reason

@@ -200,6 +200,13 @@ def parse_args() -> argparse.Namespace:
         default=False,
         help="Re-run even when cached JSONL already exists.",
     )
+    parser.add_argument(
+        "--no-thinking",
+        "-nt",
+        action="store_true",
+        default=False,
+        help="Disable extended thinking (sets enable_thinking: false).",
+    )
     args = parser.parse_args()
     logger.remove()
     if args.verbose >= 2:
@@ -341,6 +348,8 @@ def main() -> None:
         config = replace(config, api_key=args.api_key)
     if args.model is not None:
         config = replace(config, model=args.model)
+    if args.no_thinking:
+        config = replace(config, enable_thinking=False)
 
     client = LLMClient(config)
 

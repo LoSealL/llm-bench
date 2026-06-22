@@ -27,6 +27,7 @@ from llm_bench.runner import (
     MathArenaRunner,
     SimpleVQARunner,
 )
+from llm_bench.runner.comparebench import _ALL_KNOWN_SPLITS
 from llm_bench.runners import BenchmarkResults
 from llm_bench.storage import BenchmarkDB
 
@@ -97,14 +98,7 @@ def parse_args() -> argparse.Namespace:
     ]
     lveval_lengths = ["16k", "32k", "64k", "128k", "256k"]
     bfcl_categories = ALL_CATEGORIES + list(TEST_COLLECTION_MAPPING.keys())
-    comparebench_splits = [
-        "CompareTallyBench",
-        "CompareGeometryBench",
-        "CompareSpatialBench",
-        "CompareHistBench",
-        "CompareCelebrityBench",
-        "CompareLandmarkBench",
-    ]
+    comparebench_splits = _ALL_KNOWN_SPLITS
 
     parser.add_argument(
         "--lveval-datasets",

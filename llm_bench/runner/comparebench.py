@@ -24,10 +24,18 @@ _SPLITS = [
     "CompareTallyBench",
     "CompareGeometryBench",
     "CompareSpatialBench",
+    "CompareTemporalBench",
+]
+
+# Splits that existed in earlier versions of the dataset.
+# Kept for CLI choices so historical SQLite records remain queryable.
+_LEGACY_SPLITS = [
     "CompareHistBench",
     "CompareCelebrityBench",
     "CompareLandmarkBench",
 ]
+
+_ALL_KNOWN_SPLITS = _SPLITS + _LEGACY_SPLITS
 
 
 class CompareBenchRunner(BaseRunner):
@@ -276,10 +284,20 @@ class CompareBenchRunner(BaseRunner):
                         skip,
                         split_name,
                     )
-                split_results = self._predict_split(
-                    split_name, skip=skip, writer=writer
-                )
-                new_results.extend(split_results)
+                try:
+                    split_results = self._predict_split(
+                        split_name, skip=skip, writer=writer
+                    )
+                    new_results.extend(split_results)
+                except ValueError as exc:
+                    if "Unknown split" in str(exc):
+                        logger.warning(
+                            "Split '{}' not found in dataset — skipping "
+                            "(historical records still in report)",
+                            split_name,
+                        )
+                        continue
+                    raise
         finally:
             writer.close()
         all_results = existing + new_results

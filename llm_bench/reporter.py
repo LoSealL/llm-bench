@@ -8,6 +8,8 @@ expandable score tables, and per-sample detail modals.
 """
 
 import json
+import argparse
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -100,6 +102,7 @@ def _build_html(
   .sample-table {{font-size:0.8rem;}}
   .sample-table td {{max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}}
   .sample-table td.expanded {{white-space:normal;word-break:break-all;}}
+  .table-container {{overflow-x:auto;max-height:500px;overflow-y:auto;}}
   .model-select {{
     padding:0.5rem;border:1px solid var(--border);border-radius:0.5rem;
     font-size:0.875rem;margin-bottom:1rem;
@@ -204,7 +207,7 @@ function renderCards() {{
       return a.localeCompare(b);
     }});
 
-    let tableHtml = '<table><thead><tr><th>Category</th>';
+    let tableHtml = '<div class="table-container"><table><thead><tr><th>Category</th>';
     for (const model of Object.keys(modelsData)) {{
       tableHtml += '<th>' + model + '</th>';
     }}
@@ -229,7 +232,7 @@ function renderCards() {{
       }}
       tableHtml += '</tr>';
     }}
-    tableHtml += '</tbody></table>';
+    tableHtml += '</tbody></table></div>';
 
     // Add sample detail links
     let sampleLinks = '<div style="margin-top:0.75rem">';
@@ -378,3 +381,33 @@ def generate_html_report(db: BenchmarkDB, out_dir: Path) -> None:
     report_path = out_dir / "benchmark_report.html"
     report_path.write_text(html, encoding="utf-8")
     logger.info("Report saved to {}", report_path)
+
+
+def _main() -> None:
+    """Regenerate HTML report from existing SQLite data."""
+    parser = argparse.ArgumentParser(
+        description="Regenerate benchmark HTML report from historical data.",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=str,
+        default="results",
+        help="Directory with benchmarks.db and where report is written (default: results).",
+    )
+    args = parser.parse_args()
+
+    out_dir = Path(args.output_dir)
+    db_path = out_dir / "benchmarks.db"
+    if not db_path.exists():
+        logger.error("Database not found: {}", db_path)
+        sys.exit(1)
+
+    db = BenchmarkDB(db_path)
+    try:
+        generate_html_report(db, out_dir)
+    finally:
+        db.close()
+
+
+if __name__ == "__main__":
+    _main()

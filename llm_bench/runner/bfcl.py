@@ -173,6 +173,30 @@ class BFCLRunner(BaseRunner):
         """
         return list(entry["question"][0])
 
+    def dry_run(self, **kwargs: Any) -> None:
+        """Load dataset and print metadata without API calls."""
+        for category in self._categories:
+            dataset = load_dataset_entry(category)
+            dataset = self._apply_limit(dataset)
+            logger.info(
+                "BFCL '{}' — {} samples",
+                category,
+                len(dataset),
+            )
+            for item in dataset:
+                sample_id = item.get("id", "unknown")
+                logger.info("  Sample: {}", sample_id)
+                messages = item.get("question", [])
+                if messages:
+                    logger.info(
+                        "    Question: {}",
+                        messages[0][-1].get("content", "")[:200]
+                        if isinstance(messages[0], list) and messages[0]
+                        else str(messages)[:200],
+                    )
+                functions = item.get("function", [])
+                logger.info("    Functions: {}", [f.get("name", "?") for f in functions])
+
     def _build_tools(self, entry: dict[str, Any]) -> list[dict[str, Any]] | None:
         """Build OpenAI tool definitions for a single entry.
 

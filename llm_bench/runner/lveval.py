@@ -130,6 +130,43 @@ class LVEvalRunner(BaseRunner):
                 datasets.append(f"{name}_{length}")
         return datasets
 
+    def dry_run(
+        self,
+        *,
+        selected: list[str] | None = None,
+        lengths: list[str] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Load dataset and print metadata without API calls."""
+        datasets = self._get_datasets(selected, lengths)
+        for dataset_name in datasets:
+            dataset_base = re.split(r"_.{1,3}k", dataset_name)[0]
+            data = self._utils.load_LVEval_dataset(
+                dataset_name,
+                data_path=f"data/lveval/{dataset_base}",
+            )
+            data = self._apply_limit(data)
+            logger.info(
+                "LVEval {} ({}) — {} samples",
+                dataset_name,
+                dataset_base,
+                len(data),
+            )
+            for item in data:
+                logger.info("  Sample: {}", item.get("id", "unknown"))
+                logger.info(
+                    "    Input: {} chars",
+                    len(item.get("input", "")),
+                )
+                logger.info(
+                    "    Question: {}",
+                    str(item.get("question", ""))[:200],
+                )
+                logger.info(
+                    "    Answers: {}",
+                    item.get("answers", []),
+                )
+
     def _predict_dataset(
         self,
         dataset_name: str,

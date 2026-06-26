@@ -110,6 +110,28 @@ class LongBenchRunner(BaseRunner):
             return False
         return pred.strip().upper() == answer.strip().upper()
 
+    def dry_run(self, **kwargs: Any) -> None:
+        """Load dataset and print metadata without API calls."""
+        dataset = self._load_hf_dataset(
+            "THUDM/LongBench-v2",
+            "train",
+            "LongBench-v2",
+        )
+        self._inspect_dataset(
+            dataset,
+            label="LongBench-v2",
+            fields=[
+                "_id",
+                "domain",
+                "question",
+                "choice_A",
+                "choice_B",
+                "choice_C",
+                "choice_D",
+                "answer",
+            ],
+        )
+
     def _predict(
         self,
         skip: int = 0,

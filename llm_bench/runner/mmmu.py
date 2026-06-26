@@ -249,9 +249,6 @@ class MMMURunner(BaseRunner):
         )
         data = [dict(item) for item in dataset]
 
-        if self._limit is not None and hasattr(dataset, "select"):
-            data = data[: self._limit]
-
         logger.info(
             "Loaded MMMU/{} ({}) with {} rows",
             subject,
@@ -400,6 +397,49 @@ class MMMURunner(BaseRunner):
             "by_question_type": by_question_type,
             "by_difficulty": by_difficulty,
         }
+
+    def dry_run(self, **kwargs: Any) -> None:
+        """Load dataset and display sample images without API calls."""
+        from datasets import load_dataset  # type: ignore[import-untyped]
+
+        for subject in self._SUBJECTS:
+            try:
+                dataset = load_dataset(
+                    "MMMU/MMMU",
+                    subject,
+                    split=self._split,
+                )
+                data = [dict(item) for item in dataset]
+
+                logger.info(
+                    "MMMU/{} ({}) — {} samples",
+                    subject,
+                    self._split,
+                    len(data),
+                )
+                if not data:
+                    continue
+
+                self._inspect_dataset(
+                    data,
+                    label=f"MMMU/{subject}",
+                    image_field="image_1",
+                    fields=[
+                        "id",
+                        "question",
+                        "question_type",
+                        "options",
+                        "answer",
+                        "topic_difficulty",
+                    ],
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Failed to dry-run {}: {}",
+                    subject,
+                    exc,
+                )
+                continue
 
     def run(self, **kwargs: Any) -> dict[str, Any]:
         """Run the MMMU benchmark across all subjects.

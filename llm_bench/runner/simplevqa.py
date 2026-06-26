@@ -139,6 +139,26 @@ class SimpleVQARunner(BaseRunner):
         """
         return self._normalize_text(pred) == self._normalize_text(answer)
 
+    def dry_run(self, **kwargs: Any) -> None:
+        """Load dataset and print metadata without API calls."""
+        dataset = self._load_hf_dataset(
+            "m-a-p/SimpleVQA",
+            "test",
+            "SimpleVQA",
+        )
+        self._inspect_dataset(
+            dataset,
+            label="SimpleVQA",
+            image_field="image",
+            fields=[
+                "data_id",
+                "question",
+                "answer",
+                "original_category",
+                "language",
+            ],
+        )
+
     def _predict(
         self,
         skip: int = 0,

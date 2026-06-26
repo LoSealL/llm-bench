@@ -93,6 +93,19 @@ class MathArenaRunner(BaseRunner):
             return False
         return pred.strip() == answer.strip()
 
+    def dry_run(self, **kwargs: Any) -> None:
+        """Load dataset and print metadata without API calls."""
+        dataset = self._load_hf_dataset(
+            "MathArena/aime_2026",
+            "train",
+            "MathArena",
+        )
+        self._inspect_dataset(
+            dataset,
+            label="MathArena",
+            fields=["problem_idx", "year", "answer"],
+        )
+
     def _predict(
         self,
         skip: int = 0,

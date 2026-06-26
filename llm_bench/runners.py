@@ -91,7 +91,7 @@ class BaseRunner(ABC):
 
     def __init__(
         self,
-        client: LLMClient,
+        client: LLMClient | None,
         output_dir: str | Path,
         benchmark_name: str,
         limit: int | None = None,
@@ -101,7 +101,7 @@ class BaseRunner(ABC):
         """Prepare the runner.
 
         Args:
-            client: Initialized LLM client.
+            client: Initialized LLM client (``None`` for dry-run mode).
             output_dir: Base output directory; a subdirectory named
                 *benchmark_name* is created automatically.
             benchmark_name: Directory name for this benchmark's outputs.
@@ -111,7 +111,7 @@ class BaseRunner(ABC):
         self._client = client
         self._limit = limit
         self._force = force
-        model_name = client._model.replace("/", "_")
+        model_name = (client._model.replace("/", "_") if client else "dry-run")
         self._output_dir = Path(output_dir) / model_name / benchmark_name
         self._output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -335,7 +335,8 @@ class BaseRunner(ABC):
                 Image.open(io.BytesIO(raw)).verify()
                 return True
             if isinstance(image, Image.Image):
-                image.verify()
+                # Already loaded — no need to verify (PIL raises if verify()
+                # is called after the image has been accessed).
                 return True
             return False
         except Exception as exc:  # noqa: BLE001
@@ -605,6 +606,106 @@ class BaseRunner(ABC):
                 for group, stats in by_group.items()
             },
         }
+
+    @staticmethod
+    def _try_display_image(image: Any, label: str = "image") -> None:
+        """Save an image to a temp file and display it with terminal-image-cli.
+
+        Accepts a PIL ``Image.Image``, a base64-encoded string, or a dict
+        with a ``bytes`` key (HuggingFace datasets format).
+
+        Args:
+            image: Image data in various formats.
+            label: Used in the temp filename.
+        """
+        import base64
+        import io
+        import subprocess
+        import tempfile
+        from pathlib import Path
+
+        if image is None:
+            return
+
+        if isinstance(image, str):
+            try:
+                image = Image.open(io.BytesIO(base64.b64decode(image)))
+            except Exception:
+                return
+        elif isinstance(image, dict) and "bytes" in image:
+            try:
+                image = Image.open(io.BytesIO(image["bytes"]))
+            except Exception:
+                return
+        elif not hasattr(image, "save"):
+            return
+
+        temp_dir = Path(tempfile.gettempdir()) / "llm_bench_dry_run"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        safe_label = label.replace("/", "_").replace("\\", "_")
+        img_path = temp_dir / f"{safe_label}.png"
+        image.save(img_path)
+        logger.info("    Image saved: {}", img_path)
+        try:
+            subprocess.run(
+                f"npx terminal-image-cli {img_path}",
+                timeout=30,
+                check=False,
+                shell=True,
+            )
+        except Exception as exc:
+            logger.warning("    Could not display image: {}", exc)
+
+    def _inspect_dataset(
+        self,
+        data: list[dict[str, Any]],
+        *,
+        label: str = "Sample",
+        image_field: str | None = None,
+        fields: list[str] | None = None,
+    ) -> None:
+        """Print metadata for each dataset row without API calls.
+
+        Args:
+            data: List of dataset dicts.
+            label: Prefix for log messages.
+            image_field: If set, display the image at this field key.
+            fields: Ordered list of field keys to print. ``None`` prints
+                all scalar fields.
+        """
+        for i, item in enumerate(data):
+            sample_id = item.get("id") or item.get("_id") or item.get("data_id") or item.get("problem_idx") or str(i)
+            logger.info("  {}: {}", label, sample_id)
+
+            if fields:
+                for k in fields:
+                    if k in item:
+                        logger.info("    {}: {}", k, item[k])
+            else:
+                for k, v in item.items():
+                    if k in (image_field, "image", "image_1"):
+                        continue
+                    if isinstance(v, (str, int, float, bool)) or v is None:
+                        logger.info("    {}: {}", k, v)
+                    elif isinstance(v, (list, tuple)) and len(v) <= 10:
+                        logger.info("    {}: {}", k, v)
+
+            if image_field:
+                self._try_display_image(item.get(image_field), label=f"{label}_{sample_id}")
+            elif "image" in item:
+                self._try_display_image(item["image"], label=f"{label}_{sample_id}")
+            elif "image_1" in item:
+                self._try_display_image(item["image_1"], label=f"{label}_{sample_id}")
+
+    def dry_run(self, **kwargs: Any) -> None:
+        """Load dataset and print metadata without API calls.
+
+        Subclasses must implement this by loading their dataset(s) and
+        calling :meth:`_inspect_dataset`.
+        """
+        raise NotImplementedError(
+            f"dry_run not implemented for {self.__class__.__name__}"
+        )
 
     @abstractmethod
     def run(self, **kwargs: Any) -> dict[str, Any]:

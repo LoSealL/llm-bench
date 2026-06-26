@@ -33,6 +33,56 @@ from llm_bench.runners import BenchmarkResults
 from llm_bench.storage import BenchmarkDB
 
 
+def _run_dry_run(args: argparse.Namespace) -> None:
+    """Instantiate selected runners with a dummy client and call dry_run."""
+    common = {
+        "client": None,
+        "output_dir": args.output_dir,
+        "limit": args.limit,
+        "max_tokens": args.max_tokens,
+        "temperature": args.temperature,
+        "force": args.force,
+    }
+
+    if args.lveval:
+        LVEvalRunner(
+            **common,
+            max_length=args.max_length,
+        ).dry_run(selected=args.lveval_datasets, lengths=args.lveval_lengths)
+
+    if args.longbench:
+        LongBenchRunner(**common).dry_run()
+
+    if args.matharena:
+        MathArenaRunner(**common).dry_run()
+
+    if args.bfcl:
+        BFCLRunner(
+            **common,
+            categories=args.bfcl_categories,
+        ).dry_run()
+
+    if args.simplevqa:
+        SimpleVQARunner(
+            **common,
+            image_width=args.image_width,
+            image_height=args.image_height,
+        ).dry_run()
+
+    if args.comparebench:
+        CompareBenchRunner(
+            **common,
+            image_width=args.image_width,
+            image_height=args.image_height,
+        ).dry_run(selected_splits=args.comparebench_splits)
+
+    if args.mmmu:
+        MMMURunner(
+            **common,
+            split=args.mmmu_split,
+        ).dry_run()
+
+
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments.
 
@@ -214,6 +264,12 @@ def parse_args() -> argparse.Namespace:
         default=False,
         help="Disable extended thinking (sets enable_thinking: false).",
     )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=False,
+        help="Load datasets and print info without calling the API.",
+    )
     args = parser.parse_args()
     logger.remove()
     if args.verbose >= 2:
@@ -351,6 +407,31 @@ def _save_samples_to_db(
 def main() -> None:
     """Execute the benchmark pipeline."""
     args = parse_args()
+
+    if not any(
+        [
+            args.lveval,
+            args.longbench,
+            args.matharena,
+            args.bfcl,
+            args.simplevqa,
+            args.comparebench,
+            args.mmmu,
+        ]
+    ):
+        logger.warning(
+            "No benchmark selected. Use --lveval, --longbench, --matharena, "
+            "--bfcl, --simplevqa, --comparebench, and/or --mmmu to choose which "
+            "benchmarks to run."
+        )
+        return
+
+    # Dry-run mode: inspect datasets without loading config or API calls
+    if args.dry_run:
+        logger.info("Dry-run mode: inspecting datasets without API calls")
+        _run_dry_run(args)
+        return
+
     config = load_config()
 
     if args.base_url is not None:
@@ -378,24 +459,6 @@ def main() -> None:
         args.comparebench,
         args.mmmu,
     )
-
-    if not any(
-        [
-            args.lveval,
-            args.longbench,
-            args.matharena,
-            args.bfcl,
-            args.simplevqa,
-            args.comparebench,
-            args.mmmu,
-        ]
-    ):
-        logger.warning(
-            "No benchmark selected. Use --lveval, --longbench, --matharena, "
-            "--bfcl, --simplevqa, --comparebench, and/or --mmmu to choose which "
-            "benchmarks to run."
-        )
-        return
 
     # Open database for historical storage
     out_dir = Path(args.output_dir)

@@ -152,6 +152,26 @@ class CompareBenchRunner(BaseRunner):
         """
         return pred.strip().upper() == answer.strip().upper()
 
+    def dry_run(self, **kwargs: Any) -> None:
+        """Load dataset and print metadata without API calls."""
+        splits = kwargs.get("selected_splits") or _SPLITS
+        for split_name in splits:
+            dataset = self._load_hf_dataset(
+                "qiuzhangTiTi/CompareBench",
+                split_name,
+                f"CompareBench/{split_name}",
+            )
+            self._inspect_dataset(
+                dataset,
+                label=f"CompareBench/{split_name}",
+                image_field="image",
+                fields=[
+                    "image_name",
+                    "vlm_question",
+                    "gt_answer",
+                ],
+            )
+
     def _predict_split(
         self,
         split_name: str,

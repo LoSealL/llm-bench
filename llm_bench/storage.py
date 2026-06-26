@@ -414,4 +414,41 @@ class BenchmarkDB:
                 results.model, "comparebench", "comparebench", cb_scores, config
             )
 
+        # MMMU
+        if results.mmmu:
+            mmmu_scores: dict[str, dict[str, Any]] = {}
+            mmmu_overall = results.mmmu.get("overall", {})
+            mmmu_scores["overall"] = {
+                "accuracy": mmmu_overall.get("accuracy", 0.0),
+                "correct": mmmu_overall.get("correct", 0),
+                "total": mmmu_overall.get("total", 0),
+            }
+            for domain, stats in results.mmmu.get("by_domain", {}).items():
+                mmmu_scores[domain] = {
+                    "accuracy": stats.get("accuracy", 0.0),
+                    "correct": stats.get("correct", 0),
+                    "total": stats.get("total", 0),
+                }
+            for subject, stats in results.mmmu.get("by_subject", {}).items():
+                mmmu_scores[subject] = {
+                    "accuracy": stats.get("accuracy", 0.0),
+                    "correct": stats.get("correct", 0),
+                    "total": stats.get("total", 0),
+                }
+            for qtype, stats in results.mmmu.get("by_question_type", {}).items():
+                mmmu_scores[qtype] = {
+                    "accuracy": stats.get("accuracy", 0.0),
+                    "correct": stats.get("correct", 0),
+                    "total": stats.get("total", 0),
+                }
+            for diff, stats in results.mmmu.get("by_difficulty", {}).items():
+                mmmu_scores[diff] = {
+                    "accuracy": stats.get("accuracy", 0.0),
+                    "correct": stats.get("correct", 0),
+                    "total": stats.get("total", 0),
+                }
+            run_ids["mmmu"] = self.save_results(
+                results.model, "mmmu", "mmmu", mmmu_scores, config
+            )
+
         return run_ids

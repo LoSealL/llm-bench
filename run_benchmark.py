@@ -25,6 +25,7 @@ from llm_bench.runner import (
     LVEvalRunner,
     LongBenchRunner,
     MathArenaRunner,
+    MMMURunner,
     SimpleVQARunner,
 )
 from llm_bench.runner.comparebench import _ALL_KNOWN_SPLITS
@@ -143,6 +144,18 @@ def parse_args() -> argparse.Namespace:
         default=None,
         metavar="CATEGORY",
         help="BFCL categories to evaluate (default: simple_python multiple).",
+    )
+    parser.add_argument(
+        "--mmmu",
+        action="store_true",
+        help="Run the MMMU benchmark.",
+    )
+    parser.add_argument(
+        "--mmmu-split",
+        type=str,
+        default="dev",
+        choices=["dev", "validation", "test"],
+        help="MMMU dataset split (default: dev).",
     )
     parser.add_argument(
         "--comparebench",
@@ -330,6 +343,10 @@ def _save_samples_to_db(
     if args.comparebench:
         _load_and_save("comparebench", "predictions.jsonl", id_key="data_id")
 
+    # MMMU
+    if args.mmmu:
+        _load_and_save("mmmu", "predictions.jsonl", id_key="id")
+
 
 def main() -> None:
     """Execute the benchmark pipeline."""
@@ -352,13 +369,14 @@ def main() -> None:
     logger.info("Running benchmarks for model {}", config.model)
     logger.debug(
         "Active benchmarks: lveval={} longbench={} matharena={} bfcl={} "
-        "simplevqa={} comparebench={}",
+        "simplevqa={} comparebench={} mmmu={}",
         args.lveval,
         args.longbench,
         args.matharena,
         args.bfcl,
         args.simplevqa,
         args.comparebench,
+        args.mmmu,
     )
 
     if not any(
@@ -369,11 +387,12 @@ def main() -> None:
             args.bfcl,
             args.simplevqa,
             args.comparebench,
+            args.mmmu,
         ]
     ):
         logger.warning(
             "No benchmark selected. Use --lveval, --longbench, --matharena, "
-            "--bfcl, --simplevqa, and/or --comparebench to choose which "
+            "--bfcl, --simplevqa, --comparebench, and/or --mmmu to choose which "
             "benchmarks to run."
         )
         return
@@ -405,6 +424,8 @@ def main() -> None:
         benchmarks_to_run.append("simplevqa")
     if args.comparebench:
         benchmarks_to_run.append("comparebench")
+    if args.mmmu:
+        benchmarks_to_run.append("mmmu")
 
     # Clear model+benchmark data when --force is used
     if args.force:
@@ -495,6 +516,19 @@ def main() -> None:
             results.comparebench = comparebench.run(
                 selected_splits=args.comparebench_splits,
             )
+
+        if args.mmmu:
+            logger.info("Running MMMU")
+            mmmu = MMMURunner(
+                client,
+                args.output_dir,
+                split=args.mmmu_split,
+                limit=args.limit,
+                max_tokens=args.max_tokens,
+                temperature=args.temperature,
+                force=args.force,
+            )
+            results.mmmu = mmmu.run()
     except KeyboardInterrupt:
         interrupted = True
         logger.warning("Interrupted — saving completed results")

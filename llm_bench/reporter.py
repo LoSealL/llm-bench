@@ -364,6 +364,7 @@ def generate_html_report(db: BenchmarkDB, out_dir: Path) -> None:
         "bfcl": "BFCL v4",
         "simplevqa": "SimpleVQA",
         "comparebench": "CompareBench",
+        "mmmu": "MMMU",
     }
 
     html = _build_html(

@@ -36,13 +36,35 @@ class MMMURunner(BaseRunner):
     """
 
     _SUBJECTS = [
-        "Accounting", "Agriculture", "Architecture_and_Engineering", "Art",
-        "Art_Theory", "Basic_Medical_Science", "Biology", "Chemistry",
-        "Clinical_Medicine", "Computer_Science", "Design",
-        "Diagnostics_and_Laboratory_Medicine", "Economics", "Electronics",
-        "Energy_and_Power", "Finance", "Geography", "History", "Literature",
-        "Manage", "Marketing", "Materials", "Math", "Mechanical_Engineering",
-        "Music", "Pharmacy", "Physics", "Psychology", "Public_Health",
+        "Accounting",
+        "Agriculture",
+        "Architecture_and_Engineering",
+        "Art",
+        "Art_Theory",
+        "Basic_Medical_Science",
+        "Biology",
+        "Chemistry",
+        "Clinical_Medicine",
+        "Computer_Science",
+        "Design",
+        "Diagnostics_and_Laboratory_Medicine",
+        "Economics",
+        "Electronics",
+        "Energy_and_Power",
+        "Finance",
+        "Geography",
+        "History",
+        "Literature",
+        "Manage",
+        "Marketing",
+        "Materials",
+        "Math",
+        "Mechanical_Engineering",
+        "Music",
+        "Pharmacy",
+        "Physics",
+        "Psychology",
+        "Public_Health",
         "Sociology",
     ]
 
@@ -264,8 +286,7 @@ class MMMURunner(BaseRunner):
         for item in self._progress(data, desc=f"MMMU/{subject}"):
             # Skip multi-image samples (only evaluate single-image questions)
             has_multi_images = any(
-                item.get(f"image_{i}") is not None
-                for i in range(2, 8)
+                item.get(f"image_{i}") is not None for i in range(2, 8)
             )
             if has_multi_images:
                 logger.debug("Skipping multi-image sample {}", item.get("id"))
@@ -302,9 +323,17 @@ class MMMURunner(BaseRunner):
                     temperature=self._temperature,
                 )
                 if question_type == "multiple-choice":
-                    pred = self._extract_mc_answer(response.content, options or []) if response.valid else ""
+                    pred = (
+                        self._extract_mc_answer(response.content, options or [])
+                        if response.valid
+                        else ""
+                    )
                 else:
-                    pred = self._extract_open_answer(response.content) if response.valid else ""
+                    pred = (
+                        self._extract_open_answer(response.content)
+                        if response.valid
+                        else ""
+                    )
                 finish_reason = response.finish_reason
                 response_text = response.content
                 valid = response.valid
@@ -325,7 +354,9 @@ class MMMURunner(BaseRunner):
                 "subfield": item.get("subfield", ""),
                 "pred": pred,
                 "answer": answer,
-                "correct": self._compare_answer(pred, answer, question_type) if valid else False,
+                "correct": self._compare_answer(pred, answer, question_type)
+                if valid
+                else False,
                 "valid": valid,
                 "image_valid": image_valid,
                 "finish_reason": finish_reason,
@@ -357,7 +388,11 @@ class MMMURunner(BaseRunner):
         by_domain = {}
         domains = set(self._DOMAIN_MAP.values())
         for domain in domains:
-            domain_data = [item for item in data if item.get("domain") == domain and item.get("valid", True)]
+            domain_data = [
+                item
+                for item in data
+                if item.get("domain") == domain and item.get("valid", True)
+            ]
             if domain_data:
                 by_domain[domain] = self._overall_stats(
                     domain_data, correct_key="correct", valid_key="valid"
@@ -366,7 +401,11 @@ class MMMURunner(BaseRunner):
         # By subject
         by_subject = {}
         for subject in self._SUBJECTS:
-            subject_data = [item for item in data if item.get("subject") == subject and item.get("valid", True)]
+            subject_data = [
+                item
+                for item in data
+                if item.get("subject") == subject and item.get("valid", True)
+            ]
             if subject_data:
                 by_subject[subject] = self._overall_stats(
                     subject_data, correct_key="correct", valid_key="valid"
@@ -375,7 +414,11 @@ class MMMURunner(BaseRunner):
         # By question type
         by_question_type = {}
         for qtype in ["multiple-choice", "short-answer"]:
-            qtype_data = [item for item in data if item.get("question_type") == qtype and item.get("valid", True)]
+            qtype_data = [
+                item
+                for item in data
+                if item.get("question_type") == qtype and item.get("valid", True)
+            ]
             if qtype_data:
                 by_question_type[qtype] = self._overall_stats(
                     qtype_data, correct_key="correct", valid_key="valid"
@@ -384,7 +427,11 @@ class MMMURunner(BaseRunner):
         # By difficulty
         by_difficulty = {}
         for diff in ["Easy", "Medium", "Hard"]:
-            diff_data = [item for item in data if item.get("difficulty") == diff and item.get("valid", True)]
+            diff_data = [
+                item
+                for item in data
+                if item.get("difficulty") == diff and item.get("valid", True)
+            ]
             if diff_data:
                 by_difficulty[diff] = self._overall_stats(
                     diff_data, correct_key="correct", valid_key="valid"

@@ -80,6 +80,8 @@ class BenchmarkResults:
     simplevqa: dict[str, Any] = field(default_factory=dict)
     comparebench: dict[str, Any] = field(default_factory=dict)
     mmmu: dict[str, Any] = field(default_factory=dict)
+    ocrbench_v2: dict[str, Any] = field(default_factory=dict)
+    ocrbench_omni: dict[str, Any] = field(default_factory=dict)
 
 
 class BaseRunner(ABC):
@@ -111,7 +113,7 @@ class BaseRunner(ABC):
         self._client = client
         self._limit = limit
         self._force = force
-        model_name = (client._model.replace("/", "_") if client else "dry-run")
+        model_name = client._model.replace("/", "_") if client else "dry-run"
         self._output_dir = Path(output_dir) / model_name / benchmark_name
         self._output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -608,15 +610,21 @@ class BaseRunner(ABC):
         }
 
     @staticmethod
-    def _try_display_image(image: Any, label: str = "image") -> None:
+    def _try_display_image(
+        image: Any,
+        label: str = "image",
+        image_size: tuple[int, int] | None = None,
+    ) -> None:
         """Save an image to a temp file and display it with terminal-image-cli.
 
         Accepts a PIL ``Image.Image``, a base64-encoded string, or a dict
-        with a ``bytes`` key (HuggingFace datasets format).
+        with a ``bytes`` key (HuggingFace datasets format). When
+        ``image_size`` is provided, the image is resized before display.
 
         Args:
             image: Image data in various formats.
             label: Used in the temp filename.
+            image_size: Optional ``(width, height)`` resize target.
         """
         import base64
         import io
@@ -637,8 +645,12 @@ class BaseRunner(ABC):
                 image = Image.open(io.BytesIO(image["bytes"]))
             except Exception:
                 return
-        elif not hasattr(image, "save"):
+        elif not isinstance(image, Image.Image):
             return
+
+        if image_size is not None:
+            resample = getattr(Image, "Resampling", Image).LANCZOS  # type: ignore[attr-defined]
+            image = image.resize(image_size, resample)
 
         temp_dir = Path(tempfile.gettempdir()) / "llm_bench_dry_run"
         temp_dir.mkdir(parents=True, exist_ok=True)
@@ -648,7 +660,7 @@ class BaseRunner(ABC):
         logger.info("    Image saved: {}", img_path)
         try:
             subprocess.run(
-                f"npx terminal-image-cli {img_path}",
+                f'npx terminal-image-cli "{img_path}"',
                 timeout=30,
                 check=False,
                 shell=True,
@@ -663,6 +675,7 @@ class BaseRunner(ABC):
         label: str = "Sample",
         image_field: str | None = None,
         fields: list[str] | None = None,
+        image_size: tuple[int, int] | None = None,
     ) -> None:
         """Print metadata for each dataset row without API calls.
 
@@ -672,9 +685,17 @@ class BaseRunner(ABC):
             image_field: If set, display the image at this field key.
             fields: Ordered list of field keys to print. ``None`` prints
                 all scalar fields.
+            image_size: Optional ``(width, height)`` resize target applied
+                to displayed images.
         """
         for i, item in enumerate(data):
-            sample_id = item.get("id") or item.get("_id") or item.get("data_id") or item.get("problem_idx") or str(i)
+            sample_id = (
+                item.get("id")
+                or item.get("_id")
+                or item.get("data_id")
+                or item.get("problem_idx")
+                or str(i)
+            )
             logger.info("  {}: {}", label, sample_id)
 
             if fields:
@@ -691,11 +712,23 @@ class BaseRunner(ABC):
                         logger.info("    {}: {}", k, v)
 
             if image_field:
-                self._try_display_image(item.get(image_field), label=f"{label}_{sample_id}")
+                self._try_display_image(
+                    item.get(image_field),
+                    label=f"{label}_{sample_id}",
+                    image_size=image_size,
+                )
             elif "image" in item:
-                self._try_display_image(item["image"], label=f"{label}_{sample_id}")
+                self._try_display_image(
+                    item["image"],
+                    label=f"{label}_{sample_id}",
+                    image_size=image_size,
+                )
             elif "image_1" in item:
-                self._try_display_image(item["image_1"], label=f"{label}_{sample_id}")
+                self._try_display_image(
+                    item["image_1"],
+                    label=f"{label}_{sample_id}",
+                    image_size=image_size,
+                )
 
     def dry_run(self, **kwargs: Any) -> None:
         """Load dataset and print metadata without API calls.

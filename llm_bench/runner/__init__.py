@@ -12,6 +12,8 @@ from llm_bench.runner.lveval import LVEvalRunner
 from llm_bench.runner.longbench import LongBenchRunner
 from llm_bench.runner.matharena import MathArenaRunner
 from llm_bench.runner.mmmu import MMMURunner
+from llm_bench.runner.ocrbench_omni import OmniOCRBenchRunner
+from llm_bench.runner.ocrbench_v2 import OCRBenchV2Runner
 from llm_bench.runner.simplevqa import SimpleVQARunner
 
 __all__ = [
@@ -21,5 +23,7 @@ __all__ = [
     "LongBenchRunner",
     "MathArenaRunner",
     "MMMURunner",
+    "OmniOCRBenchRunner",
+    "OCRBenchV2Runner",
     "SimpleVQARunner",
 ]

@@ -368,6 +368,8 @@ def generate_html_report(db: BenchmarkDB, out_dir: Path) -> None:
         "simplevqa": "SimpleVQA",
         "comparebench": "CompareBench",
         "mmmu": "MMMU",
+        "ocrbench_v2": "OCRBench v2",
+        "ocrbench_omni": "Omni AI OCR",
     }
 
     html = _build_html(

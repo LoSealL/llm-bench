@@ -451,4 +451,42 @@ class BenchmarkDB:
                 results.model, "mmmu", "mmmu", mmmu_scores, config
             )
 
+        # OCRBench v2
+        if results.ocrbench_v2:
+            ocrv2_scores: dict[str, dict[str, Any]] = {}
+            ocrv2_overall = results.ocrbench_v2.get("overall", {})
+            ocrv2_scores["overall"] = {
+                "accuracy": ocrv2_overall.get("accuracy", 0.0),
+                "correct": ocrv2_overall.get("correct", 0),
+                "total": ocrv2_overall.get("total", 0),
+            }
+            for task_type, stats in results.ocrbench_v2.get("by_task_type", {}).items():
+                ocrv2_scores[task_type] = {
+                    "accuracy": stats.get("accuracy", 0.0),
+                    "correct": stats.get("correct", 0),
+                    "total": stats.get("total", 0),
+                }
+            run_ids["ocrbench_v2"] = self.save_results(
+                results.model, "ocrbench_v2", "ocrbench_v2", ocrv2_scores, config
+            )
+
+        # Omni AI OCR
+        if results.ocrbench_omni:
+            omni_scores: dict[str, dict[str, Any]] = {}
+            omni_overall = results.ocrbench_omni.get("overall", {})
+            omni_scores["overall"] = {
+                "accuracy": omni_overall.get("accuracy", 0.0),
+                "correct": omni_overall.get("correct", 0),
+                "total": omni_overall.get("total", 0),
+            }
+            for doc_format, stats in results.ocrbench_omni.get("by_format", {}).items():
+                omni_scores[doc_format] = {
+                    "accuracy": stats.get("accuracy", 0.0),
+                    "correct": stats.get("correct", 0),
+                    "total": stats.get("total", 0),
+                }
+            run_ids["ocrbench_omni"] = self.save_results(
+                results.model, "ocrbench_omni", "ocrbench_omni", omni_scores, config
+            )
+
         return run_ids

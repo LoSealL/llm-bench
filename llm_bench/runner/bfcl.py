@@ -195,7 +195,9 @@ class BFCLRunner(BaseRunner):
                         else str(messages)[:200],
                     )
                 functions = item.get("function", [])
-                logger.info("    Functions: {}", [f.get("name", "?") for f in functions])
+                logger.info(
+                    "    Functions: {}", [f.get("name", "?") for f in functions]
+                )
 
     def _build_tools(self, entry: dict[str, Any]) -> list[dict[str, Any]] | None:
         """Build OpenAI tool definitions for a single entry.

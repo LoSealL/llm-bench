@@ -26,6 +26,8 @@ from llm_bench.runner import (
     LongBenchRunner,
     MathArenaRunner,
     MMMURunner,
+    OCRBenchV2Runner,
+    OmniOCRBenchRunner,
     SimpleVQARunner,
 )
 from llm_bench.runner.comparebench import _ALL_KNOWN_SPLITS
@@ -80,6 +82,20 @@ def _run_dry_run(args: argparse.Namespace) -> None:
         MMMURunner(
             **common,
             split=args.mmmu_split,
+        ).dry_run()
+
+    if args.ocrbench_v2:
+        OCRBenchV2Runner(
+            **common,
+            image_width=args.image_width,
+            image_height=args.image_height,
+        ).dry_run()
+
+    if args.ocrbench_omni:
+        OmniOCRBenchRunner(
+            **common,
+            image_width=args.image_width,
+            image_height=args.image_height,
         ).dry_run()
 
 
@@ -206,6 +222,16 @@ def parse_args() -> argparse.Namespace:
         default="dev",
         choices=["dev", "validation", "test"],
         help="MMMU dataset split (default: dev).",
+    )
+    parser.add_argument(
+        "--ocrbench-v2",
+        action="store_true",
+        help="Run the OCRBench v2 benchmark.",
+    )
+    parser.add_argument(
+        "--ocrbench-omni",
+        action="store_true",
+        help="Run the Omni AI OCR benchmark.",
     )
     parser.add_argument(
         "--comparebench",
@@ -403,6 +429,14 @@ def _save_samples_to_db(
     if args.mmmu:
         _load_and_save("mmmu", "predictions.jsonl", id_key="id")
 
+    # OCRBench v2
+    if args.ocrbench_v2:
+        _load_and_save("ocrbench_v2", "predictions.jsonl", id_key="id")
+
+    # Omni AI OCR
+    if args.ocrbench_omni:
+        _load_and_save("ocrbench_omni", "predictions.jsonl", id_key="id")
+
 
 def main() -> None:
     """Execute the benchmark pipeline."""
@@ -417,12 +451,14 @@ def main() -> None:
             args.simplevqa,
             args.comparebench,
             args.mmmu,
+            args.ocrbench_v2,
+            args.ocrbench_omni,
         ]
     ):
         logger.warning(
             "No benchmark selected. Use --lveval, --longbench, --matharena, "
-            "--bfcl, --simplevqa, --comparebench, and/or --mmmu to choose which "
-            "benchmarks to run."
+            "--bfcl, --simplevqa, --comparebench, --mmmu, --ocrbench-v2, "
+            "and/or --ocrbench-omni to choose which benchmarks to run."
         )
         return
 
@@ -450,7 +486,7 @@ def main() -> None:
     logger.info("Running benchmarks for model {}", config.model)
     logger.debug(
         "Active benchmarks: lveval={} longbench={} matharena={} bfcl={} "
-        "simplevqa={} comparebench={} mmmu={}",
+        "simplevqa={} comparebench={} mmmu={} ocrbench_v2={} ocrbench_omni={}",
         args.lveval,
         args.longbench,
         args.matharena,
@@ -458,6 +494,8 @@ def main() -> None:
         args.simplevqa,
         args.comparebench,
         args.mmmu,
+        args.ocrbench_v2,
+        args.ocrbench_omni,
     )
 
     # Open database for historical storage
@@ -489,6 +527,10 @@ def main() -> None:
         benchmarks_to_run.append("comparebench")
     if args.mmmu:
         benchmarks_to_run.append("mmmu")
+    if args.ocrbench_v2:
+        benchmarks_to_run.append("ocrbench_v2")
+    if args.ocrbench_omni:
+        benchmarks_to_run.append("ocrbench_omni")
 
     # Clear model+benchmark data when --force is used
     if args.force:
@@ -592,6 +634,34 @@ def main() -> None:
                 force=args.force,
             )
             results.mmmu = mmmu.run()
+
+        if args.ocrbench_v2:
+            logger.info("Running OCRBench v2")
+            ocrbench_v2 = OCRBenchV2Runner(
+                client,
+                args.output_dir,
+                limit=args.limit,
+                max_tokens=args.max_tokens,
+                temperature=args.temperature,
+                image_width=args.image_width,
+                image_height=args.image_height,
+                force=args.force,
+            )
+            results.ocrbench_v2 = ocrbench_v2.run()
+
+        if args.ocrbench_omni:
+            logger.info("Running Omni AI OCR")
+            ocrbench_omni = OmniOCRBenchRunner(
+                client,
+                args.output_dir,
+                limit=args.limit,
+                max_tokens=args.max_tokens,
+                temperature=args.temperature,
+                image_width=args.image_width,
+                image_height=args.image_height,
+                force=args.force,
+            )
+            results.ocrbench_omni = ocrbench_omni.run()
     except KeyboardInterrupt:
         interrupted = True
         logger.warning("Interrupted — saving completed results")

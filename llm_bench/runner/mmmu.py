@@ -8,13 +8,12 @@ chat APIs. Only single-image questions are evaluated; multi-image samples
 are skipped.
 """
 
-from __future__ import annotations
-
 import ast
 import re
 from pathlib import Path
 from typing import Any
 
+from datasets import load_dataset
 from loguru import logger
 
 from llm_bench.client import LLMClient
@@ -136,7 +135,7 @@ class MMMURunner(BaseRunner):
         self._split = split
         self._max_tokens = max_tokens
         self._temperature = temperature
-        self._remaining_limit = limit
+        self._limit: int = limit or 0
 
     def _build_messages(
         self,
@@ -262,7 +261,6 @@ class MMMURunner(BaseRunner):
         Returns:
             List of prediction dicts.
         """
-        from datasets import load_dataset  # type: ignore[import-untyped]
 
         dataset = load_dataset(
             "MMMU/MMMU",
@@ -283,7 +281,10 @@ class MMMURunner(BaseRunner):
             logger.info("Skipping {} cached samples for {}", skip, subject)
 
         results: list[dict[str, Any]] = []
-        for item in self._progress(data, desc=f"MMMU/{subject}"):
+        limit = min(self._limit, len(data)) or len(data)
+        for i, item in enumerate(
+            self._progress(data, desc=f"MMMU/{subject}", total=limit)
+        ):
             # Skip multi-image samples (only evaluate single-image questions)
             has_multi_images = any(
                 item.get(f"image_{i}") is not None for i in range(2, 8)
@@ -297,8 +298,7 @@ class MMMURunner(BaseRunner):
                 logger.warning("Skipping sample {} with no image", item.get("id"))
                 continue
 
-            # Apply global limit
-            if self._remaining_limit is not None and self._remaining_limit <= 0:
+            if limit <= i:
                 break
 
             question_type = item.get("question_type", "multiple-choice")
@@ -365,9 +365,6 @@ class MMMURunner(BaseRunner):
             results.append(record)
             if writer is not None:
                 writer.write(record)
-
-            if self._remaining_limit is not None:
-                self._remaining_limit -= 1
 
         return results
 
@@ -447,7 +444,6 @@ class MMMURunner(BaseRunner):
 
     def dry_run(self, **kwargs: Any) -> None:
         """Load dataset and display sample images without API calls."""
-        from datasets import load_dataset  # type: ignore[import-untyped]
 
         for subject in self._SUBJECTS:
             try:

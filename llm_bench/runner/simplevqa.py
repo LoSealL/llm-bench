@@ -6,8 +6,6 @@ Evaluates vision-language understanding on m-a-p/SimpleVQA using
 OpenAI-compatible multimodal chat APIs.
 """
 
-from __future__ import annotations
-
 import re
 import string
 import unicodedata
@@ -17,7 +15,14 @@ from typing import Any
 from loguru import logger
 
 from llm_bench.client import LLMClient
-from llm_bench.runners import BaseRunner, _JsonlWriter
+from llm_bench.runners import (
+    ArgSpec,
+    BaseRunner,
+    PersistenceSpec,
+    RunnerMetadata,
+    _JsonlWriter,
+    grouped_to_scores,
+)
 
 
 class SimpleVQARunner(BaseRunner):
@@ -264,3 +269,47 @@ class SimpleVQARunner(BaseRunner):
             o["total"],
         )
         return stats
+
+
+# ---- Registry configuration -------------------------------------------------
+
+
+class Metadata(RunnerMetadata):
+    """Self-registration metadata for the SimpleVQA runner."""
+
+    name = "simplevqa"
+    dataset = "simplevqa"
+    runner_cls = SimpleVQARunner
+    cli_args = [
+        ArgSpec(
+            name="simplevqa",
+            flag="--simplevqa",
+            help="Run the SimpleVQA benchmark.",
+            is_flag=True,
+        ),
+    ]
+    persistence = PersistenceSpec(
+        layout="single",
+        categories=[],
+        filename="predictions.jsonl",
+        id_key="id",
+    )
+
+    @classmethod
+    def build_runner(cls, client, output_dir, args):
+        """Construct a SimpleVQA runner from parsed CLI args."""
+        return SimpleVQARunner(
+            client,  # type: ignore[arg-type]
+            output_dir,
+            limit=args.limit,
+            max_tokens=args.max_tokens,
+            temperature=args.temperature,
+            image_width=args.image_width,
+            image_height=args.image_height,
+            force=args.force,
+        )
+
+    @classmethod
+    def to_scores(cls, result):
+        """Extract overall plus by_category groups."""
+        return grouped_to_scores(result, ["by_category"])

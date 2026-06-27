@@ -2,8 +2,13 @@
 # SPDX-License-Identifier: MIT
 """Main CLI entry point for the LLM benchmark suite.
 
-Opt-in orchestration for LVEval, LongBench-v2, MathArena, and BFCL v4
+Opt-in orchestration for LVEval, LongBench-v2, MathArena, BFCL v4,
+SimpleVQA, CompareBench, MMMU, OCRBench v2, and Omni AI OCR
 evaluations; generates a consolidated report for selected benchmarks.
+
+All benchmark dispatch is driven by the registry in
+:mod:`llm_bench.registry` — adding a benchmark requires editing only the
+registry, not this file.
 """
 
 import argparse
@@ -15,287 +20,35 @@ from typing import Any
 
 from loguru import logger
 
-from llm_bench.bfcl_constants import ALL_CATEGORIES, TEST_COLLECTION_MAPPING
 from llm_bench.client import LLMClient
 from llm_bench.config import load_config
-from llm_bench.reporter import generate_html_report
-from llm_bench.runner import (
-    BFCLRunner,
-    CompareBenchRunner,
-    LVEvalRunner,
-    LongBenchRunner,
-    MathArenaRunner,
-    MMMURunner,
-    OCRBenchV2Runner,
-    OmniOCRBenchRunner,
-    SimpleVQARunner,
+from llm_bench.registry import (
+    BENCHMARKS,
+    build_argparser,
+    selected_benchmarks,
 )
-from llm_bench.runner.comparebench import _ALL_KNOWN_SPLITS
+from llm_bench.reporter import generate_html_report
 from llm_bench.runners import BenchmarkResults
 from llm_bench.storage import BenchmarkDB
 
 
 def _run_dry_run(args: argparse.Namespace) -> None:
-    """Instantiate selected runners with a dummy client and call dry_run."""
-    common = {
-        "client": None,
-        "output_dir": args.output_dir,
-        "limit": args.limit,
-        "max_tokens": args.max_tokens,
-        "temperature": args.temperature,
-        "force": args.force,
-    }
+    """Instantiate selected runners with a dummy client and call dry_run.
 
-    if args.lveval:
-        LVEvalRunner(
-            **common,
-            max_length=args.max_length,
-        ).dry_run(selected=args.lveval_datasets, lengths=args.lveval_lengths)
-
-    if args.longbench:
-        LongBenchRunner(**common).dry_run()
-
-    if args.matharena:
-        MathArenaRunner(**common).dry_run()
-
-    if args.bfcl:
-        BFCLRunner(
-            **common,
-            categories=args.bfcl_categories,
-        ).dry_run()
-
-    if args.simplevqa:
-        SimpleVQARunner(
-            **common,
-            image_width=args.image_width,
-            image_height=args.image_height,
-        ).dry_run()
-
-    if args.comparebench:
-        CompareBenchRunner(
-            **common,
-            image_width=args.image_width,
-            image_height=args.image_height,
-        ).dry_run(selected_splits=args.comparebench_splits)
-
-    if args.mmmu:
-        MMMURunner(
-            **common,
-            split=args.mmmu_split,
-        ).dry_run()
-
-    if args.ocrbench_v2:
-        OCRBenchV2Runner(
-            **common,
-            image_width=args.image_width,
-            image_height=args.image_height,
-        ).dry_run()
-
-    if args.ocrbench_omni:
-        OmniOCRBenchRunner(
-            **common,
-            image_width=args.image_width,
-            image_height=args.image_height,
-        ).dry_run()
+    Iterates the registry; no per-benchmark conditional branches.
+    """
+    for descriptor in selected_benchmarks(args):
+        runner = descriptor.build_runner(None, args.output_dir, args)
+        runner.dry_run(**descriptor.extract_run_kwargs(args))
 
 
 def parse_args() -> argparse.Namespace:
-    """Parse command-line arguments.
+    """Parse command-line arguments via the registry-generated parser.
 
     Returns:
         Parsed namespace with user-supplied or default values.
     """
-    parser = argparse.ArgumentParser(
-        description="Run LLM benchmarks via OpenAI-compatible API.",
-    )
-    parser.add_argument(
-        "--base-url",
-        type=str,
-        default=None,
-        help="OpenAI-compatible API base URL (overrides OPENAI_BASE_URL from .env).",
-    )
-    parser.add_argument(
-        "--api-key",
-        type=str,
-        default=None,
-        help="API key for the endpoint (overrides OPENAI_API_KEY from .env).",
-    )
-    parser.add_argument(
-        "--model",
-        type=str,
-        default=None,
-        help="Model identifier (overrides OPENAI_MODEL from .env).",
-    )
-    parser.add_argument(
-        "--output-dir",
-        type=str,
-        default="results",
-        help="Directory for predictions and reports.",
-    )
-    parser.add_argument(
-        "--max-length",
-        type=int,
-        default=32000,
-        help="Maximum token length for prompt truncation.",
-    )
-    parser.add_argument(
-        "--max-tokens",
-        type=int,
-        default=1024,
-        help="Override max output tokens for all runners (default: 1024).",
-    )
-    parser.add_argument(
-        "--temperature",
-        type=float,
-        default=0,
-        help="Override sampling temperature for all runners.",
-    )
-    lveval_datasets = [
-        "hotpotwikiqa_mixup",
-        "loogle_SD_mixup",
-        "loogle_CR_mixup",
-        "loogle_MIR_mixup",
-        "multifieldqa_en_mixup",
-        "multifieldqa_zh_mixup",
-        "factrecall_en",
-        "factrecall_zh",
-        "cmrc_mixup",
-        "lic_mixup",
-        "dureader_mixup",
-    ]
-    lveval_lengths = ["16k", "32k", "64k", "128k", "256k"]
-    bfcl_categories = ALL_CATEGORIES + list(TEST_COLLECTION_MAPPING.keys())
-    comparebench_splits = _ALL_KNOWN_SPLITS
-
-    parser.add_argument(
-        "--lveval-datasets",
-        nargs="+",
-        choices=lveval_datasets,
-        default=None,
-        metavar="DATASET",
-        help="LVEval dataset base names to evaluate (default: all).",
-    )
-    parser.add_argument(
-        "--lveval-lengths",
-        nargs="+",
-        choices=lveval_lengths,
-        default=["64k"],
-        metavar="LENGTH",
-        help="LVEval length levels (default: 64k).",
-    )
-    parser.add_argument(
-        "--lveval",
-        action="store_true",
-        help="Run the LVEval benchmark.",
-    )
-    parser.add_argument(
-        "--longbench",
-        action="store_true",
-        help="Run the LongBench-v2 benchmark.",
-    )
-    parser.add_argument(
-        "--matharena",
-        action="store_true",
-        help="Run the MathArena benchmark.",
-    )
-    parser.add_argument(
-        "--bfcl",
-        action="store_true",
-        help="Run the BFCL v4 benchmark.",
-    )
-    parser.add_argument(
-        "--bfcl-categories",
-        nargs="+",
-        choices=bfcl_categories,
-        default=None,
-        metavar="CATEGORY",
-        help="BFCL categories to evaluate (default: simple_python multiple).",
-    )
-    parser.add_argument(
-        "--mmmu",
-        action="store_true",
-        help="Run the MMMU benchmark.",
-    )
-    parser.add_argument(
-        "--mmmu-split",
-        type=str,
-        default="dev",
-        choices=["dev", "validation", "test"],
-        help="MMMU dataset split (default: dev).",
-    )
-    parser.add_argument(
-        "--ocrbench-v2",
-        action="store_true",
-        help="Run the OCRBench v2 benchmark.",
-    )
-    parser.add_argument(
-        "--ocrbench-omni",
-        action="store_true",
-        help="Run the Omni AI OCR benchmark.",
-    )
-    parser.add_argument(
-        "--comparebench",
-        action="store_true",
-        help="Run the CompareBench benchmark.",
-    )
-    parser.add_argument(
-        "--comparebench-splits",
-        nargs="+",
-        choices=comparebench_splits,
-        default=None,
-        metavar="SPLIT",
-        help="CompareBench splits to evaluate (default: all).",
-    )
-    parser.add_argument(
-        "--simplevqa",
-        action="store_true",
-        help="Run the SimpleVQA benchmark.",
-    )
-    parser.add_argument(
-        "--image-width",
-        type=int,
-        default=None,
-        help="Resize VQA images to this width before sending.",
-    )
-    parser.add_argument(
-        "--image-height",
-        type=int,
-        default=None,
-        help="Resize VQA images to this height before sending.",
-    )
-    parser.add_argument(
-        "--limit",
-        type=int,
-        default=None,
-        help="Limit each dataset to the first N samples (for testing).",
-    )
-    parser.add_argument(
-        "-v",
-        "--verbose",
-        action="count",
-        default=0,
-        help="Increase verbosity (-v for DEBUG, -vv for TRACE).",
-    )
-    parser.add_argument(
-        "--force",
-        "-f",
-        action="store_true",
-        default=False,
-        help="Re-run even when cached JSONL already exists.",
-    )
-    parser.add_argument(
-        "--no-thinking",
-        "-nt",
-        action="store_true",
-        default=False,
-        help="Disable extended thinking (sets enable_thinking: false).",
-    )
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        default=False,
-        help="Load datasets and print info without calling the API.",
-    )
+    parser = build_argparser()
     args = parser.parse_args()
     logger.remove()
     if args.verbose >= 2:
@@ -314,8 +67,8 @@ def _save_samples_to_db(
 ) -> None:
     """Load per-sample JSONL data and save to the database.
 
-    Reads the JSONL files produced by each runner and persists
-    them to SQLite for historical querying.
+    Iterates the registry, branching only on the descriptor's
+    ``persistence.category`` data field — never on the benchmark identity.
 
     Args:
         db: Open database connection.
@@ -348,117 +101,62 @@ def _save_samples_to_db(
             logger.warning("Failed to load {} for DB: {}", path, exc)
         return records
 
-    def _load_and_save(
-        benchmark: str,
-        filename: str,
-        id_key: str = "sample_id",
-    ) -> None:
-        jsonl_path = model_dir / benchmark / filename
-        if not jsonl_path.exists():
-            return
-        records = _load_jsonl(jsonl_path)
-        if records:
-            run_id = _get_run_id(benchmark)
-            if run_id is not None:
+    for descriptor in selected_benchmarks(args):
+        bench_dir = model_dir / descriptor.name
+        if not bench_dir.exists():
+            continue
+        run_id = _get_run_id(descriptor.name)
+        if run_id is None:
+            continue
+
+        pspec = descriptor.persistence
+        if pspec.layout == "single":
+            jsonl_path = bench_dir / pspec.filename
+            if not jsonl_path.exists():
+                continue
+            records = _load_jsonl(jsonl_path)
+            if records:
                 db.save_samples(
                     run_id=run_id,
                     model=model,
-                    benchmark=benchmark,
+                    benchmark=descriptor.name,
                     samples=records,
-                    id_key=id_key,
+                    id_key=pspec.id_key,
                 )
-
-    # LVEval: multiple JSONL files per dataset
-    if args.lveval:
-        lveval_dir = model_dir / "lveval"
-        if lveval_dir.exists():
-            run_id = _get_run_id("lveval")
-            if run_id is not None:
-                for jsonl_file in lveval_dir.glob("*.jsonl"):
-                    dataset_name = jsonl_file.stem
-                    records = _load_jsonl(jsonl_file)
-                    if records:
-                        for i, rec in enumerate(records):
-                            if "sample_id" not in rec:
-                                rec["sample_id"] = f"{dataset_name}_{i}"
-                        db.save_samples(
-                            run_id=run_id,
-                            model=model,
-                            benchmark="lveval",
-                            samples=records,
-                            id_key="sample_id",
-                        )
-
-    # LongBench
-    if args.longbench:
-        _load_and_save("longbench", "predictions.jsonl", id_key="_id")
-
-    # MathArena
-    if args.matharena:
-        _load_and_save("matharena", "predictions.jsonl", id_key="problem_idx")
-
-    # BFCL: per-category JSONL files
-    if args.bfcl:
-        bfcl_dir = model_dir / "bfcl"
-        if bfcl_dir.exists():
-            run_id = _get_run_id("bfcl")
-            if run_id is not None:
-                for jsonl_file in bfcl_dir.glob("*.jsonl"):
-                    records = _load_jsonl(jsonl_file)
-                    if records:
-                        for rec in records:
-                            if "sample_id" not in rec:
-                                rec["sample_id"] = rec.get("id", "")
-                        db.save_samples(
-                            run_id=run_id,
-                            model=model,
-                            benchmark="bfcl",
-                            samples=records,
-                            id_key="sample_id",
-                        )
-
-    # SimpleVQA
-    if args.simplevqa:
-        _load_and_save("simplevqa", "predictions.jsonl", id_key="data_id")
-
-    # CompareBench
-    if args.comparebench:
-        _load_and_save("comparebench", "predictions.jsonl", id_key="data_id")
-
-    # MMMU
-    if args.mmmu:
-        _load_and_save("mmmu", "predictions.jsonl", id_key="id")
-
-    # OCRBench v2
-    if args.ocrbench_v2:
-        _load_and_save("ocrbench_v2", "predictions.jsonl", id_key="id")
-
-    # Omni AI OCR
-    if args.ocrbench_omni:
-        _load_and_save("ocrbench_omni", "predictions.jsonl", id_key="id")
+        elif pspec.layout == "multi":
+            for jsonl_file in bench_dir.glob(pspec.filename):
+                stem = jsonl_file.stem
+                records = _load_jsonl(jsonl_file)
+                if not records:
+                    continue
+                if pspec.sample_id_factory is not None:
+                    for i, rec in enumerate(records):
+                        if pspec.id_key not in rec:
+                            rec[pspec.id_key] = pspec.sample_id_factory(
+                                stem, i, rec
+                            )
+                db.save_samples(
+                    run_id=run_id,
+                    model=model,
+                    benchmark=descriptor.name,
+                    samples=records,
+                    id_key=pspec.id_key,
+                )
 
 
 def main() -> None:
     """Execute the benchmark pipeline."""
     args = parse_args()
 
-    if not any(
-        [
-            args.lveval,
-            args.longbench,
-            args.matharena,
-            args.bfcl,
-            args.simplevqa,
-            args.comparebench,
-            args.mmmu,
-            args.ocrbench_v2,
-            args.ocrbench_omni,
-        ]
-    ):
+    selected = selected_benchmarks(args)
+    if not selected:
+        flag_names = ", ".join(
+            d.cli_args[0].flag for d in BENCHMARKS
+        )
         logger.warning(
-            "No benchmark selected. Use --lveval, --longbench, --matharena, "
-            "--bfcl, --simplevqa, --comparebench, --mmmu, --ocrbench-v2, "
-            "and/or --ocrbench-omni to choose which benchmarks to run."
+            "No benchmark selected. Use {} to choose which "
+            "benchmarks to run.",
+            flag_names,
         )
         return
 
@@ -485,17 +183,8 @@ def main() -> None:
 
     logger.info("Running benchmarks for model {}", config.model)
     logger.debug(
-        "Active benchmarks: lveval={} longbench={} matharena={} bfcl={} "
-        "simplevqa={} comparebench={} mmmu={} ocrbench_v2={} ocrbench_omni={}",
-        args.lveval,
-        args.longbench,
-        args.matharena,
-        args.bfcl,
-        args.simplevqa,
-        args.comparebench,
-        args.mmmu,
-        args.ocrbench_v2,
-        args.ocrbench_omni,
+        "Active benchmarks: {}",
+        ", ".join(d.name for d in selected),
     )
 
     # Open database for historical storage
@@ -511,157 +200,21 @@ def main() -> None:
         "limit": args.limit,
     }
 
-    # Collect which benchmarks will run for --force clearing
-    benchmarks_to_run: list[str] = []
-    if args.lveval:
-        benchmarks_to_run.append("lveval")
-    if args.longbench:
-        benchmarks_to_run.append("longbench")
-    if args.matharena:
-        benchmarks_to_run.append("matharena")
-    if args.bfcl:
-        benchmarks_to_run.append("bfcl")
-    if args.simplevqa:
-        benchmarks_to_run.append("simplevqa")
-    if args.comparebench:
-        benchmarks_to_run.append("comparebench")
-    if args.mmmu:
-        benchmarks_to_run.append("mmmu")
-    if args.ocrbench_v2:
-        benchmarks_to_run.append("ocrbench_v2")
-    if args.ocrbench_omni:
-        benchmarks_to_run.append("ocrbench_omni")
-
     # Clear model+benchmark data when --force is used
     if args.force:
-        for bench in benchmarks_to_run:
-            db.clear_model_benchmark(config.model, bench)
+        for descriptor in selected:
+            db.clear_model_benchmark(config.model, descriptor.name)
 
     interrupted = False
     try:
-        if args.lveval:
-            logger.info("Running LVEval")
-            lveval = LVEvalRunner(
-                client,
-                args.output_dir,
-                max_length=args.max_length,
-                limit=args.limit,
-                max_tokens=args.max_tokens,
-                temperature=args.temperature,
-                force=args.force,
+        for descriptor in selected:
+            logger.info("Running {}", descriptor.name)
+            runner = descriptor.build_runner(
+                client, args.output_dir, args
             )
-            results.lveval = lveval.run(
-                selected=args.lveval_datasets,
-                lengths=args.lveval_lengths,
+            results.results[descriptor.name] = runner.run(
+                **descriptor.extract_run_kwargs(args)
             )
-
-        if args.longbench:
-            logger.info("Running LongBench-v2")
-            longbench = LongBenchRunner(
-                client,
-                args.output_dir,
-                limit=args.limit,
-                max_tokens=args.max_tokens,
-                temperature=args.temperature,
-                force=args.force,
-            )
-            results.longbench = longbench.run()
-
-        if args.matharena:
-            logger.info("Running MathArena")
-            matharena = MathArenaRunner(
-                client,
-                args.output_dir,
-                limit=args.limit,
-                max_tokens=args.max_tokens,
-                temperature=args.temperature,
-                force=args.force,
-            )
-            results.matharena = matharena.run()
-
-        if args.bfcl:
-            logger.info("Running BFCL v4")
-            bfcl = BFCLRunner(
-                client,
-                args.output_dir,
-                categories=args.bfcl_categories,
-                limit=args.limit,
-                max_tokens=args.max_tokens,
-                temperature=args.temperature,
-                force=args.force,
-            )
-            results.bfcl = bfcl.run()
-
-        if args.simplevqa:
-            logger.info("Running SimpleVQA")
-            simplevqa = SimpleVQARunner(
-                client,
-                args.output_dir,
-                limit=args.limit,
-                max_tokens=args.max_tokens,
-                temperature=args.temperature,
-                image_width=args.image_width,
-                image_height=args.image_height,
-                force=args.force,
-            )
-            results.simplevqa = simplevqa.run()
-
-        if args.comparebench:
-            logger.info("Running CompareBench")
-            comparebench = CompareBenchRunner(
-                client,
-                args.output_dir,
-                limit=args.limit,
-                max_tokens=args.max_tokens,
-                temperature=args.temperature,
-                image_width=args.image_width,
-                image_height=args.image_height,
-                force=args.force,
-            )
-            results.comparebench = comparebench.run(
-                selected_splits=args.comparebench_splits,
-            )
-
-        if args.mmmu:
-            logger.info("Running MMMU")
-            mmmu = MMMURunner(
-                client,
-                args.output_dir,
-                split=args.mmmu_split,
-                limit=args.limit,
-                max_tokens=args.max_tokens,
-                temperature=args.temperature,
-                force=args.force,
-            )
-            results.mmmu = mmmu.run()
-
-        if args.ocrbench_v2:
-            logger.info("Running OCRBench v2")
-            ocrbench_v2 = OCRBenchV2Runner(
-                client,
-                args.output_dir,
-                limit=args.limit,
-                max_tokens=args.max_tokens,
-                temperature=args.temperature,
-                image_width=args.image_width,
-                image_height=args.image_height,
-                force=args.force,
-            )
-            results.ocrbench_v2 = ocrbench_v2.run()
-
-        if args.ocrbench_omni:
-            logger.info("Running Omni AI OCR")
-            ocrbench_omni = OmniOCRBenchRunner(
-                client,
-                args.output_dir,
-                limit=args.limit,
-                max_tokens=args.max_tokens,
-                temperature=args.temperature,
-                image_width=args.image_width,
-                image_height=args.image_height,
-                force=args.force,
-            )
-            results.ocrbench_omni = ocrbench_omni.run()
     except KeyboardInterrupt:
         interrupted = True
         logger.warning("Interrupted — saving completed results")

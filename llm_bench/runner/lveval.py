@@ -17,7 +17,13 @@ from typing import Any
 from loguru import logger
 
 from llm_bench.client import LLMClient
-from llm_bench.runners import BaseRunner, _JsonlWriter
+from llm_bench.runners import (
+    ArgSpec,
+    BaseRunner,
+    PersistenceSpec,
+    RunnerMetadata,
+    _JsonlWriter,
+)
 
 
 class _MockModule:
@@ -317,3 +323,104 @@ class LVEvalRunner(BaseRunner):
             logger.info("{}: {:.2f}", dataset_name, score)
 
         return results
+
+
+# ---- Registry configuration -------------------------------------------------
+
+_LVEVAL_DATASETS = [
+    "hotpotwikiqa_mixup",
+    "loogle_SD_mixup",
+    "loogle_CR_mixup",
+    "loogle_MIR_mixup",
+    "multifieldqa_en_mixup",
+    "multifieldqa_zh_mixup",
+    "factrecall_en",
+    "factrecall_zh",
+    "cmrc_mixup",
+    "lic_mixup",
+    "dureader_mixup",
+]
+_LVEVAL_LENGTHS = ["16k", "32k", "64k", "128k", "256k"]
+
+
+class Metadata(RunnerMetadata):
+    """Self-registration metadata for the LVEval runner."""
+
+    name = "lveval"
+    dataset = "lveval"
+    runner_cls = LVEvalRunner
+    cli_args = [
+        ArgSpec(
+            name="lveval",
+            flag="--lveval",
+            help="Run the LVEval benchmark.",
+            is_flag=True,
+        ),
+        ArgSpec(
+            name="lveval_datasets",
+            flag="--lveval-datasets",
+            help="LVEval dataset base names to evaluate (default: all).",
+            nargs="+",
+            choices=_LVEVAL_DATASETS,
+            default=_LVEVAL_DATASETS,
+        ),
+        ArgSpec(
+            name="lveval_lengths",
+            flag="--lveval-lengths",
+            help="LVEval length levels (default: 64k).",
+            nargs="+",
+            choices=_LVEVAL_LENGTHS,
+            default=["64k"],
+        ),
+    ]
+    persistence = PersistenceSpec(
+        layout="multi",
+        categories=_LVEVAL_DATASETS,
+        filename="*.jsonl",
+        id_key="sample_id",
+        sample_id_factory=lambda stem, i, rec: f"{stem}_{i}",
+    )
+
+    @classmethod
+    def build_runner(cls, client, output_dir, args):
+        """Construct an LVEval runner from parsed CLI args."""
+        return LVEvalRunner(
+            client,  # type: ignore[arg-type]
+            output_dir,
+            max_length=args.max_length,
+            limit=args.limit,
+            max_tokens=args.max_tokens,
+            temperature=args.temperature,
+            force=args.force,
+        )
+
+    @classmethod
+    def to_scores(cls, result):
+        """Flatten nested ``dataset -> {length: score}`` plus overall."""
+        scores: dict[str, dict[str, Any]] = {}
+        all_vals: list[float] = []
+        for ds, lengths in result.items():
+            for length, score in lengths.items():
+                key = f"{ds}_{length}"
+                scores[key] = {
+                    "accuracy": score,
+                    "correct": None,
+                    "total": None,
+                }
+                all_vals.append(score)
+        scores["overall"] = {
+            "accuracy": (
+                sum(all_vals) / len(all_vals) if all_vals else 0.0
+            ),
+            "correct": None,
+            "total": None,
+        }
+        return scores
+
+    @classmethod
+    def extract_run_kwargs(cls, args):
+        """Extract LVEval run() kwargs from parsed CLI args."""
+        return {
+            "selected": args.lveval_datasets,
+            "lengths": args.lveval_lengths,
+        }

@@ -8,8 +8,6 @@ multimodal chat APIs. Scoring is rule-based, keyed on each sample's
 ``eval`` field.
 """
 
-from __future__ import annotations
-
 import re
 from pathlib import Path
 from typing import Any
@@ -18,7 +16,14 @@ from loguru import logger
 from PIL import Image  # type: ignore[import-untyped]
 
 from llm_bench.client import LLMClient
-from llm_bench.runners import BaseRunner, _JsonlWriter
+from llm_bench.runners import (
+    ArgSpec,
+    BaseRunner,
+    PersistenceSpec,
+    RunnerMetadata,
+    _JsonlWriter,
+    grouped_to_scores,
+)
 
 _DATASET_NAME = "ling99/OCRBench_v2"
 _DATASET_SPLIT = "test"
@@ -305,3 +310,47 @@ class OCRBenchV2Runner(BaseRunner):
             o["total"],
         )
         return stats
+
+
+# ---- Registry configuration -------------------------------------------------
+
+
+class Metadata(RunnerMetadata):
+    """Self-registration metadata for the OCRBench v2 runner."""
+
+    name = "ocrbench_v2"
+    dataset = "ocrbench_v2"
+    runner_cls = OCRBenchV2Runner
+    cli_args = [
+        ArgSpec(
+            name="ocrbench_v2",
+            flag="--ocrbench-v2",
+            help="Run the OCRBench v2 benchmark.",
+            is_flag=True,
+        ),
+    ]
+    persistence = PersistenceSpec(
+        layout="single",
+        categories=[],
+        filename="predictions.jsonl",
+        id_key="data_id",
+    )
+
+    @classmethod
+    def build_runner(cls, client, output_dir, args):
+        """Construct an OCRBench v2 runner from parsed CLI args."""
+        return OCRBenchV2Runner(
+            client,  # type: ignore[arg-type]
+            output_dir,
+            limit=args.limit,
+            max_tokens=args.max_tokens,
+            temperature=args.temperature,
+            image_width=args.image_width,
+            image_height=args.image_height,
+            force=args.force,
+        )
+
+    @classmethod
+    def to_scores(cls, result):
+        """Extract overall plus by_task_type groups."""
+        return grouped_to_scores(result, ["by_task_type"])

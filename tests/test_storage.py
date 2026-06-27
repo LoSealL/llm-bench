@@ -301,14 +301,20 @@ def test_save_benchmark_results():
         db_path = Path(tmpdir) / "test.db"
         results = BenchmarkResults(
             model="gpt-4",
-            matharena={"accuracy": 75.0, "correct": 15, "total": 20},
-            longbench={
-                "overall": 80.0,
-                "easy": 90.0,
-                "hard": 70.0,
-                "short": 85.0,
-                "medium": 75.0,
-                "long": 65.0,
+            results={
+                "matharena": {
+                    "accuracy": 75.0,
+                    "correct": 15,
+                    "total": 20,
+                },
+                "longbench": {
+                    "overall": 80.0,
+                    "easy": 90.0,
+                    "hard": 70.0,
+                    "short": 85.0,
+                    "medium": 75.0,
+                    "long": 65.0,
+                },
             },
         )
 

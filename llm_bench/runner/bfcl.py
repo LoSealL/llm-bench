@@ -16,13 +16,20 @@ from typing import Any
 
 from loguru import logger
 
+from llm_bench.bfcl_constants import ALL_CATEGORIES, TEST_COLLECTION_MAPPING
 from llm_bench.bfcl_eval import evaluate_task
 from llm_bench.bfcl_utils import (
     load_dataset_entry,
     parse_test_category_argument,
 )
 from llm_bench.client import ChatResponse, LLMClient
-from llm_bench.runners import BaseRunner, _JsonlWriter
+from llm_bench.runners import (
+    ArgSpec,
+    BaseRunner,
+    PersistenceSpec,
+    RunnerMetadata,
+    _JsonlWriter,
+)
 
 
 def _tool_calls_to_decoded(tool_calls: list[Any]) -> list[dict[str, Any]]:
@@ -319,3 +326,65 @@ class BFCLRunner(BaseRunner):
             )
 
         return all_results
+
+
+# ---- Registry configuration -------------------------------------------------
+
+_BFCL_CATEGORIES = ALL_CATEGORIES + list(TEST_COLLECTION_MAPPING.keys())
+
+
+class Metadata(RunnerMetadata):
+    """Self-registration metadata for the BFCL v4 runner."""
+
+    name = "bfcl"
+    dataset = "bfcl_v4"
+    runner_cls = BFCLRunner
+    cli_args = [
+        ArgSpec(
+            name="bfcl",
+            flag="--bfcl",
+            help="Run the BFCL v4 benchmark.",
+            is_flag=True,
+        ),
+        ArgSpec(
+            name="bfcl_categories",
+            flag="--bfcl-categories",
+            help="BFCL categories to evaluate "
+            "(default: simple_python multiple).",
+            nargs="+",
+            choices=_BFCL_CATEGORIES,
+            default=["simple_python", "multiple"],
+        ),
+    ]
+    persistence = PersistenceSpec(
+        layout="multi",
+        categories=_BFCL_CATEGORIES,
+        filename="*.jsonl",
+        id_key="sample_id",
+        sample_id_factory=lambda stem, i, rec: rec.get("id", ""),
+    )
+
+    @classmethod
+    def build_runner(cls, client, output_dir, args):
+        """Construct a BFCL v4 runner from parsed CLI args."""
+        return BFCLRunner(
+            client,  # type: ignore[arg-type]
+            output_dir,
+            categories=args.bfcl_categories,
+            limit=args.limit,
+            max_tokens=args.max_tokens,
+            temperature=args.temperature,
+            force=args.force,
+        )
+
+    @classmethod
+    def to_scores(cls, result):
+        """Rescale accuracy by 100, rename count keys."""
+        scores: dict[str, dict[str, Any]] = {}
+        for cat, stats in result.items():
+            scores[cat] = {
+                "accuracy": stats.get("accuracy", 0.0) * 100,
+                "correct": stats.get("correct_count", 0),
+                "total": stats.get("total_count", 0),
+            }
+        return scores

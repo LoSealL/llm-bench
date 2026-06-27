@@ -13,7 +13,13 @@ from typing import Any
 from loguru import logger
 
 from llm_bench.client import LLMClient
-from llm_bench.runners import BaseRunner, _JsonlWriter
+from llm_bench.runners import (
+    ArgSpec,
+    BaseRunner,
+    PersistenceSpec,
+    RunnerMetadata,
+    _JsonlWriter,
+)
 
 
 class MathArenaRunner(BaseRunner):
@@ -179,3 +185,45 @@ class MathArenaRunner(BaseRunner):
             stats["total"],
         )
         return stats
+
+
+# ---- Registry configuration -------------------------------------------------
+
+
+class Metadata(RunnerMetadata):
+    """Self-registration metadata for the MathArena runner."""
+
+    name = "matharena"
+    dataset = "aime_2026"
+    runner_cls = MathArenaRunner
+    cli_args = [
+        ArgSpec(
+            name="matharena",
+            flag="--matharena",
+            help="Run the MathArena benchmark.",
+            is_flag=True,
+        ),
+    ]
+    persistence = PersistenceSpec(
+        layout="single",
+        categories=[],
+        filename="predictions.jsonl",
+        id_key="problem_idx",
+    )
+
+    @classmethod
+    def build_runner(cls, client, output_dir, args):
+        """Construct a MathArena runner from parsed CLI args."""
+        return MathArenaRunner(
+            client,  # type: ignore[arg-type]
+            output_dir,
+            limit=args.limit,
+            max_tokens=args.max_tokens,
+            temperature=args.temperature,
+            force=args.force,
+        )
+
+    @classmethod
+    def to_scores(cls, result):
+        """Wrap result as a single ``overall`` entry."""
+        return {"overall": result}

@@ -6,10 +6,12 @@ import base64
 import io
 import json
 import re
+import subprocess
+import tempfile
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, TypeVar, cast
+from typing import Any, Callable, Literal, TypeVar, cast
 
 from datasets import load_dataset  # type: ignore[import-untyped]
 from loguru import logger
@@ -64,24 +66,18 @@ class _JsonlWriter:
 class BenchmarkResults:
     """Aggregate results from all benchmark runners.
 
+    Results are keyed by benchmark identifier (matching the registry
+    name), so no new field needs to be added when a benchmark is added
+    or removed.
+
     Attributes:
         model: The evaluated model identifier.
-        lveval: Mapping ``dataset_name -> {length_level: score}``.
-        longbench: Mapping of category names to accuracy percentages.
-        matharena: Mapping with keys ``accuracy``, ``correct``, ``total``.
-        bfcl: Mapping ``category -> {accuracy, correct_count, total_count}``.
+        results: Mapping ``benchmark_name -> result_dict``. Each
+            result_dict is whatever the runner's ``run()`` returned.
     """
 
     model: str = ""
-    lveval: dict[str, dict[str, float]] = field(default_factory=dict)
-    longbench: dict[str, float] = field(default_factory=dict)
-    matharena: dict[str, Any] = field(default_factory=dict)
-    bfcl: dict[str, Any] = field(default_factory=dict)
-    simplevqa: dict[str, Any] = field(default_factory=dict)
-    comparebench: dict[str, Any] = field(default_factory=dict)
-    mmmu: dict[str, Any] = field(default_factory=dict)
-    ocrbench_v2: dict[str, Any] = field(default_factory=dict)
-    ocrbench_omni: dict[str, Any] = field(default_factory=dict)
+    results: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 class BaseRunner(ABC):
@@ -626,12 +622,6 @@ class BaseRunner(ABC):
             label: Used in the temp filename.
             image_size: Optional ``(width, height)`` resize target.
         """
-        import base64
-        import io
-        import subprocess
-        import tempfile
-        from pathlib import Path
-
         if image is None:
             return
 
@@ -748,3 +738,183 @@ class BaseRunner(ABC):
             Benchmark-specific result dictionary.
         """
         ...
+
+
+def grouped_to_scores(
+    result: dict[str, Any],
+    group_keys: list[str],
+) -> dict[str, dict[str, Any]]:
+    """Extract ``overall`` plus named groups into canonical score format.
+
+    Shared helper for benchmarks that return
+    ``{overall: {accuracy, correct, total}, by_xxx: {name: {...}}}``.
+
+    Args:
+        result: Runner's raw result dictionary.
+        group_keys: Keys in *result* whose sub-dicts are groups.
+
+    Returns:
+        Mapping ``category -> {accuracy, correct, total}``.
+    """
+    scores: dict[str, dict[str, Any]] = {}
+    overall = result.get("overall", {})
+    scores["overall"] = {
+        "accuracy": overall.get("accuracy", 0.0),
+        "correct": overall.get("correct", 0),
+        "total": overall.get("total", 0),
+    }
+    for gk in group_keys:
+        for name, stats in result.get(gk, {}).items():
+            scores[name] = {
+                "accuracy": stats.get("accuracy", 0.0),
+                "correct": stats.get("correct", 0),
+                "total": stats.get("total", 0),
+            }
+    return scores
+
+
+# ---------------------------------------------------------------------------
+# Runner self-registration metadata types
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ArgSpec:
+    """Declarative description of one CLI argument.
+
+    Attributes:
+        name: Destination attribute name on the parsed namespace.
+        flag: CLI flag string (e.g. ``"--bfcl-categories"``).
+        help: Help text shown by argparse.
+        nargs: argparse ``nargs`` value. ``None`` → single-value.
+        choices: Allowed values; forwarded to ``add_argument``.
+        default: Default value.
+        is_flag: If ``True``, generate a ``store_true`` on/off flag.
+    """
+
+    name: str
+    flag: str
+    help: str
+    nargs: str | None = None
+    choices: list[str] | None = None
+    default: Any = None
+    is_flag: bool = False
+
+    def __post_init__(self) -> None:
+        """Validate that flag and value-taking options are mutually exclusive.
+
+        Raises:
+            ValueError: If ``is_flag`` is ``True`` while ``nargs`` or
+                ``choices`` are also set.
+        """
+        if self.is_flag and (self.nargs is not None or self.choices is not None):
+            raise ValueError(
+                f"ArgSpec '{self.name}': is_flag=True is incompatible "
+                "with nargs or choices"
+            )
+
+
+@dataclass(frozen=True)
+class PersistenceSpec:
+    """How a benchmark's prediction JSONL files are loaded into the DB.
+
+    Attributes:
+        layout: ``"single"`` for one named file, ``"multi"`` for a
+            directory glob.
+        categories: The benchmark's task sub-categories (e.g. BFCL
+            ``simple_python`` / ``multiple``, MMMU subjects, CompareBench
+            splits).  Used for reporting / filtering.
+        filename: Single mode: exact filename (e.g.
+            ``"predictions.jsonl"``). Multi mode: glob pattern (e.g.
+            ``"*.jsonl"``).
+        id_key: Dict key holding the sample identifier.
+        sample_id_factory: Optional callable ``(file_stem, index,
+            record) -> str`` used in multi-file mode to synthesise a
+            ``sample_id`` when the key is absent.
+    """
+
+    layout: Literal["single", "multi"]
+    categories: list[str]
+    filename: str
+    id_key: str
+    sample_id_factory: (
+        Callable[[str, int, dict[str, Any]], str] | None
+    ) = None
+
+
+class RunnerMetadata:
+    """Base class for runner self-registration metadata.
+
+    Each runner module defines a ``Metadata`` subclass that sets the
+    class-level attributes below.  The registry imports these classes
+    and iterates them for dispatch.
+    """
+
+    # --- must be overridden by subclasses ---
+
+    name: str
+    dataset: str
+    runner_cls: type[BaseRunner]
+    cli_args: list[ArgSpec]
+    persistence: PersistenceSpec
+
+    # --- default implementations (override as needed) ---
+
+    @classmethod
+    def build_runner(
+        cls,
+        client: LLMClient | None,
+        output_dir: str,
+        args: Any,
+    ) -> BaseRunner:
+        """Factory: assemble kwargs from parsed CLI args, return a runner.
+
+        Args:
+            client: Initialized LLM client (``None`` for dry-run).
+            output_dir: Base output directory.
+            args: Parsed CLI namespace.
+
+        Returns:
+            A runner instance ready for ``run()`` / ``dry_run()``.
+
+        Raises:
+            NotImplementedError: If the subclass does not override.
+        """
+        raise NotImplementedError(
+            f"{cls.__name__}.build_runner must be overridden"
+        )
+
+    @classmethod
+    def to_scores(
+        cls,
+        result: dict[str, Any],
+    ) -> dict[str, dict[str, Any]]:
+        """Transform runner output into canonical ``category -> {acc, ...}``.
+
+        Args:
+            result: Runner's raw result dictionary.
+
+        Returns:
+            Mapping ``category -> {accuracy, correct, total}``.
+
+        Raises:
+            NotImplementedError: If the subclass does not override.
+        """
+        raise NotImplementedError(
+            f"{cls.__name__}.to_scores must be overridden"
+        )
+
+    @classmethod
+    def extract_run_kwargs(
+        cls,
+        args: Any,
+    ) -> dict[str, Any]:
+        """Extract extra kwargs for ``runner.run()`` from CLI args.
+
+        Args:
+            args: Parsed CLI namespace.
+
+        Returns:
+            Extra kwargs dict (empty by default).
+        """
+        return {}

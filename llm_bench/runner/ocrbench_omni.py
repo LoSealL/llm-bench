@@ -8,8 +8,6 @@ APIs. Scoring compares the model's parsed JSON output against each
 sample's ``true_json_output`` under a normalized exact-match rule.
 """
 
-from __future__ import annotations
-
 import json
 import re
 from pathlib import Path
@@ -19,7 +17,14 @@ from loguru import logger
 from PIL import Image  # type: ignore[import-untyped]
 
 from llm_bench.client import LLMClient
-from llm_bench.runners import BaseRunner, _JsonlWriter
+from llm_bench.runners import (
+    ArgSpec,
+    BaseRunner,
+    PersistenceSpec,
+    RunnerMetadata,
+    _JsonlWriter,
+    grouped_to_scores,
+)
 
 _DATASET_NAME = "getomni-ai/ocr-benchmark"
 _DATASET_SPLIT = "test"
@@ -351,3 +356,47 @@ class OmniOCRBenchRunner(BaseRunner):
             o["total"],
         )
         return stats
+
+
+# ---- Registry configuration -------------------------------------------------
+
+
+class Metadata(RunnerMetadata):
+    """Self-registration metadata for the Omni AI OCR runner."""
+
+    name = "ocrbench_omni"
+    dataset = "ocrbench_omni"
+    runner_cls = OmniOCRBenchRunner
+    cli_args = [
+        ArgSpec(
+            name="ocrbench_omni",
+            flag="--ocrbench-omni",
+            help="Run the Omni AI OCR benchmark.",
+            is_flag=True,
+        ),
+    ]
+    persistence = PersistenceSpec(
+        layout="single",
+        categories=[],
+        filename="predictions.jsonl",
+        id_key="data_id",
+    )
+
+    @classmethod
+    def build_runner(cls, client, output_dir, args):
+        """Construct an Omni AI OCR runner from parsed CLI args."""
+        return OmniOCRBenchRunner(
+            client,  # type: ignore[arg-type]
+            output_dir,
+            limit=args.limit,
+            max_tokens=args.max_tokens,
+            temperature=args.temperature,
+            image_width=args.image_width,
+            image_height=args.image_height,
+            force=args.force,
+        )
+
+    @classmethod
+    def to_scores(cls, result):
+        """Extract overall plus by_format groups."""
+        return grouped_to_scores(result, ["by_format"])

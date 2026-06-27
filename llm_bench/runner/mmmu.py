@@ -17,7 +17,14 @@ from datasets import load_dataset
 from loguru import logger
 
 from llm_bench.client import LLMClient
-from llm_bench.runners import BaseRunner, _JsonlWriter
+from llm_bench.runners import (
+    ArgSpec,
+    BaseRunner,
+    PersistenceSpec,
+    RunnerMetadata,
+    _JsonlWriter,
+    grouped_to_scores,
+)
 
 
 class MMMURunner(BaseRunner):
@@ -535,3 +542,56 @@ class MMMURunner(BaseRunner):
                 s["total"],
             )
         return stats
+
+
+# ---- Registry configuration -------------------------------------------------
+
+
+class Metadata(RunnerMetadata):
+    """Self-registration metadata for the MMMU runner."""
+
+    name = "mmmu"
+    dataset = "mmmu"
+    runner_cls = MMMURunner
+    cli_args = [
+        ArgSpec(
+            name="mmmu",
+            flag="--mmmu",
+            help="Run the MMMU benchmark.",
+            is_flag=True,
+        ),
+        ArgSpec(
+            name="mmmu_split",
+            flag="--mmmu-split",
+            help="MMMU dataset split (default: dev).",
+            default="dev",
+            choices=["dev", "validation", "test"],
+        ),
+    ]
+    persistence = PersistenceSpec(
+        layout="single",
+        categories=MMMURunner._SUBJECTS,
+        filename="predictions.jsonl",
+        id_key="id",
+    )
+
+    @classmethod
+    def build_runner(cls, client, output_dir, args):
+        """Construct an MMMU runner from parsed CLI args."""
+        return MMMURunner(
+            client,  # type: ignore[arg-type]
+            output_dir,
+            split=args.mmmu_split,
+            limit=args.limit,
+            max_tokens=args.max_tokens,
+            temperature=args.temperature,
+            force=args.force,
+        )
+
+    @classmethod
+    def to_scores(cls, result):
+        """Extract overall plus all by_* sub-maps."""
+        return grouped_to_scores(
+            result,
+            ["by_domain", "by_subject", "by_question_type", "by_difficulty"],
+        )

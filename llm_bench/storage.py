@@ -6,18 +6,16 @@ Provides persistent storage for aggregated scores and per-sample
 predictions, enabling cross-model comparison in HTML reports.
 """
 
-from __future__ import annotations
-
 import json
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from loguru import logger
 
-if TYPE_CHECKING:
-    from llm_bench.runners import BenchmarkResults
+from llm_bench.registry import get_descriptor
+from llm_bench.runners import BenchmarkResults
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS runs (
@@ -306,8 +304,9 @@ class BenchmarkDB:
     ) -> dict[str, int]:
         """Save a complete BenchmarkResults object to the database.
 
-        Converts the in-memory results structure to database rows
-        for each benchmark that has data.
+        Iterates the results dict, looks up each benchmark's descriptor
+        in the registry, and uses its ``to_scores`` callable to transform
+        the runner's raw output into the canonical storage shape.
 
         Args:
             results: Aggregated results from all runners.
@@ -317,176 +316,16 @@ class BenchmarkDB:
             Mapping ``benchmark -> run_id`` for each saved benchmark.
         """
         run_ids: dict[str, int] = {}
-
-        # LVEval
-        if results.lveval:
-            scores: dict[str, dict[str, Any]] = {}
-            all_vals: list[float] = []
-            for ds, lengths in results.lveval.items():
-                for length, score in lengths.items():
-                    key = f"{ds}_{length}"
-                    scores[key] = {
-                        "accuracy": score,
-                        "correct": None,
-                        "total": None,
-                    }
-                    all_vals.append(score)
-            scores["overall"] = {
-                "accuracy": sum(all_vals) / len(all_vals) if all_vals else 0.0,
-                "correct": None,
-                "total": None,
-            }
-            run_ids["lveval"] = self.save_results(
-                results.model, "lveval", "lveval", scores, config
-            )
-
-        # LongBench
-        if results.longbench:
-            lb_scores: dict[str, dict[str, Any]] = {}
-            for cat, acc in results.longbench.items():
-                lb_scores[cat] = {
-                    "accuracy": acc,
-                    "correct": None,
-                    "total": None,
-                }
-            run_ids["longbench"] = self.save_results(
-                results.model, "longbench", "longbench_v2", lb_scores, config
-            )
-
-        # MathArena
-        if results.matharena:
-            run_ids["matharena"] = self.save_results(
+        for name, raw_result in results.results.items():
+            if not raw_result:
+                continue
+            descriptor = get_descriptor(name)
+            scores = descriptor.to_scores(raw_result)
+            run_ids[name] = self.save_results(
                 results.model,
-                "matharena",
-                "aime_2026",
-                {"overall": results.matharena},
+                name,
+                descriptor.dataset,
+                scores,
                 config,
             )
-
-        # BFCL
-        if results.bfcl:
-            bfcl_scores: dict[str, dict[str, Any]] = {}
-            for cat, stats in results.bfcl.items():
-                bfcl_scores[cat] = {
-                    "accuracy": stats.get("accuracy", 0.0) * 100,
-                    "correct": stats.get("correct_count", 0),
-                    "total": stats.get("total_count", 0),
-                }
-            run_ids["bfcl"] = self.save_results(
-                results.model, "bfcl", "bfcl_v4", bfcl_scores, config
-            )
-
-        # SimpleVQA
-        if results.simplevqa:
-            svqa_scores: dict[str, dict[str, Any]] = {}
-            overall = results.simplevqa.get("overall", {})
-            svqa_scores["overall"] = {
-                "accuracy": overall.get("accuracy", 0.0),
-                "correct": overall.get("correct", 0),
-                "total": overall.get("total", 0),
-            }
-            for cat, stats in results.simplevqa.get("by_category", {}).items():
-                svqa_scores[cat] = {
-                    "accuracy": stats.get("accuracy", 0.0),
-                    "correct": stats.get("correct", 0),
-                    "total": stats.get("total", 0),
-                }
-            run_ids["simplevqa"] = self.save_results(
-                results.model, "simplevqa", "simplevqa", svqa_scores, config
-            )
-
-        # CompareBench
-        if results.comparebench:
-            cb_scores: dict[str, dict[str, Any]] = {}
-            cb_overall = results.comparebench.get("overall", {})
-            cb_scores["overall"] = {
-                "accuracy": cb_overall.get("accuracy", 0.0),
-                "correct": cb_overall.get("correct", 0),
-                "total": cb_overall.get("total", 0),
-            }
-            for split, stats in results.comparebench.get("by_split", {}).items():
-                cb_scores[split] = {
-                    "accuracy": stats.get("accuracy", 0.0),
-                    "correct": stats.get("correct", 0),
-                    "total": stats.get("total", 0),
-                }
-            run_ids["comparebench"] = self.save_results(
-                results.model, "comparebench", "comparebench", cb_scores, config
-            )
-
-        # MMMU
-        if results.mmmu:
-            mmmu_scores: dict[str, dict[str, Any]] = {}
-            mmmu_overall = results.mmmu.get("overall", {})
-            mmmu_scores["overall"] = {
-                "accuracy": mmmu_overall.get("accuracy", 0.0),
-                "correct": mmmu_overall.get("correct", 0),
-                "total": mmmu_overall.get("total", 0),
-            }
-            for domain, stats in results.mmmu.get("by_domain", {}).items():
-                mmmu_scores[domain] = {
-                    "accuracy": stats.get("accuracy", 0.0),
-                    "correct": stats.get("correct", 0),
-                    "total": stats.get("total", 0),
-                }
-            for subject, stats in results.mmmu.get("by_subject", {}).items():
-                mmmu_scores[subject] = {
-                    "accuracy": stats.get("accuracy", 0.0),
-                    "correct": stats.get("correct", 0),
-                    "total": stats.get("total", 0),
-                }
-            for qtype, stats in results.mmmu.get("by_question_type", {}).items():
-                mmmu_scores[qtype] = {
-                    "accuracy": stats.get("accuracy", 0.0),
-                    "correct": stats.get("correct", 0),
-                    "total": stats.get("total", 0),
-                }
-            for diff, stats in results.mmmu.get("by_difficulty", {}).items():
-                mmmu_scores[diff] = {
-                    "accuracy": stats.get("accuracy", 0.0),
-                    "correct": stats.get("correct", 0),
-                    "total": stats.get("total", 0),
-                }
-            run_ids["mmmu"] = self.save_results(
-                results.model, "mmmu", "mmmu", mmmu_scores, config
-            )
-
-        # OCRBench v2
-        if results.ocrbench_v2:
-            ocrv2_scores: dict[str, dict[str, Any]] = {}
-            ocrv2_overall = results.ocrbench_v2.get("overall", {})
-            ocrv2_scores["overall"] = {
-                "accuracy": ocrv2_overall.get("accuracy", 0.0),
-                "correct": ocrv2_overall.get("correct", 0),
-                "total": ocrv2_overall.get("total", 0),
-            }
-            for task_type, stats in results.ocrbench_v2.get("by_task_type", {}).items():
-                ocrv2_scores[task_type] = {
-                    "accuracy": stats.get("accuracy", 0.0),
-                    "correct": stats.get("correct", 0),
-                    "total": stats.get("total", 0),
-                }
-            run_ids["ocrbench_v2"] = self.save_results(
-                results.model, "ocrbench_v2", "ocrbench_v2", ocrv2_scores, config
-            )
-
-        # Omni AI OCR
-        if results.ocrbench_omni:
-            omni_scores: dict[str, dict[str, Any]] = {}
-            omni_overall = results.ocrbench_omni.get("overall", {})
-            omni_scores["overall"] = {
-                "accuracy": omni_overall.get("accuracy", 0.0),
-                "correct": omni_overall.get("correct", 0),
-                "total": omni_overall.get("total", 0),
-            }
-            for doc_format, stats in results.ocrbench_omni.get("by_format", {}).items():
-                omni_scores[doc_format] = {
-                    "accuracy": stats.get("accuracy", 0.0),
-                    "correct": stats.get("correct", 0),
-                    "total": stats.get("total", 0),
-                }
-            run_ids["ocrbench_omni"] = self.save_results(
-                results.model, "ocrbench_omni", "ocrbench_omni", omni_scores, config
-            )
-
         return run_ids

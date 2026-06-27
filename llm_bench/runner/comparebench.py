@@ -6,8 +6,6 @@ Evaluates visual comparison reasoning on qiuzhangTiTi/CompareBench
 using OpenAI-compatible multimodal chat APIs.
 """
 
-from __future__ import annotations
-
 import base64
 import io
 import re
@@ -18,7 +16,14 @@ from loguru import logger
 from PIL import Image  # type: ignore[import-untyped]
 
 from llm_bench.client import LLMClient
-from llm_bench.runners import BaseRunner, _JsonlWriter
+from llm_bench.runners import (
+    ArgSpec,
+    BaseRunner,
+    PersistenceSpec,
+    RunnerMetadata,
+    _JsonlWriter,
+    grouped_to_scores,
+)
 
 _SPLITS = [
     "CompareTallyBench",
@@ -339,3 +344,60 @@ class CompareBenchRunner(BaseRunner):
                 s["total"],
             )
         return stats
+
+
+# ---- Registry configuration -------------------------------------------------
+
+
+class Metadata(RunnerMetadata):
+    """Self-registration metadata for the CompareBench runner."""
+
+    name = "comparebench"
+    dataset = "comparebench"
+    runner_cls = CompareBenchRunner
+    cli_args = [
+        ArgSpec(
+            name="comparebench",
+            flag="--comparebench",
+            help="Run the CompareBench benchmark.",
+            is_flag=True,
+        ),
+        ArgSpec(
+            name="comparebench_splits",
+            flag="--comparebench-splits",
+            help="CompareBench splits to evaluate (default: all).",
+            nargs="+",
+            choices=_SPLITS,
+            default=_SPLITS,
+        ),
+    ]
+    persistence = PersistenceSpec(
+        layout="single",
+        categories=_SPLITS,
+        filename="predictions.jsonl",
+        id_key="data_id",
+    )
+
+    @classmethod
+    def build_runner(cls, client, output_dir, args):
+        """Construct a CompareBench runner from parsed CLI args."""
+        return CompareBenchRunner(
+            client,  # type: ignore[arg-type]
+            output_dir,
+            limit=args.limit,
+            max_tokens=args.max_tokens,
+            temperature=args.temperature,
+            image_width=args.image_width,
+            image_height=args.image_height,
+            force=args.force,
+        )
+
+    @classmethod
+    def to_scores(cls, result):
+        """Extract overall plus by_split groups."""
+        return grouped_to_scores(result, ["by_split"])
+
+    @classmethod
+    def extract_run_kwargs(cls, args):
+        """Extract CompareBench run() kwargs from parsed CLI args."""
+        return {"selected_splits": args.comparebench_splits}

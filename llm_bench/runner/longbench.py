@@ -13,7 +13,13 @@ from typing import Any
 from loguru import logger
 
 from llm_bench.client import LLMClient
-from llm_bench.runners import BaseRunner, _JsonlWriter
+from llm_bench.runners import (
+    ArgSpec,
+    BaseRunner,
+    PersistenceSpec,
+    RunnerMetadata,
+    _JsonlWriter,
+)
 
 
 class LongBenchRunner(BaseRunner):
@@ -275,3 +281,52 @@ class LongBenchRunner(BaseRunner):
         stats = self._compute_stats(data)
         logger.info("LongBench-v2 Overall: {:.1f}%", stats["overall"])
         return stats
+
+
+# ---- Registry configuration -------------------------------------------------
+
+
+class Metadata(RunnerMetadata):
+    """Self-registration metadata for the LongBench-v2 runner."""
+
+    name = "longbench"
+    dataset = "longbench_v2"
+    runner_cls = LongBenchRunner
+    cli_args = [
+        ArgSpec(
+            name="longbench",
+            flag="--longbench",
+            help="Run the LongBench-v2 benchmark.",
+            is_flag=True,
+        ),
+    ]
+    persistence = PersistenceSpec(
+        layout="single",
+        categories=[],
+        filename="predictions.jsonl",
+        id_key="_id",
+    )
+
+    @classmethod
+    def build_runner(cls, client, output_dir, args):
+        """Construct a LongBench-v2 runner from parsed CLI args."""
+        return LongBenchRunner(
+            client,  # type: ignore[arg-type]
+            output_dir,
+            limit=args.limit,
+            max_tokens=args.max_tokens,
+            temperature=args.temperature,
+            force=args.force,
+        )
+
+    @classmethod
+    def to_scores(cls, result):
+        """Wrap flat ``category -> accuracy_float`` dict."""
+        scores: dict[str, dict[str, Any]] = {}
+        for cat, acc in result.items():
+            scores[cat] = {
+                "accuracy": acc,
+                "correct": None,
+                "total": None,
+            }
+        return scores
